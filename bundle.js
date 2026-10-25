@@ -53,6 +53,9 @@ async function init(){
   m.hidden=l.hidden=true;D.body.classList.add('zb-on');let b=D.createElement('section');b.id='zb';
   b.innerHTML=`<header><b>${H(m.dataset.title||'Vyberte produkty do balíčku')}</b><small class="zd"></small></header>${types.length>1?`<nav class="zy">${types.map(e=>`<button type="button" data-t="${H(e.id)}">${H(e.n)}</button>`).join('')}</nav>`:''}<main><div class="zp">Načítám…</div><aside><b>Váš balíček</b><div class="zbinfo"></div><i><u></u></i><small class="zc"></small><div class="zr"></div><div class="zs"></div><strong class="zt">0 Kč</strong><button type="button" disabled>${H(m.dataset.buttonText||'Přidat do košíku')}</button><em></em></aside></main>`;
   ($('.p-info-wrapper')||m.parentElement).append(b);await Promise.all(p.map(load));let g=$('.zp',b);
+  // Automatically include the required base product (e.g. Bruschette MAXI) in each bundle type.
+  function selectBase(){let base=p.find(e=>e.g==='zaklad'&&VIS(e)&&e.c&&!e.out);if(base)base.q=1}
+  selectBase();
   g.innerHTML=p.map(e=>`<article data-k="${e.k}">${e.i?`<img src="${H(e.i)}">`:''}<div><a ${e.u?`href="${H(e.u)}" target="_blank"`:''}>${H(e.n||e.c)}</a><small class="stock"></small><strong>${e.p==null?'Cena dle e-shopu':F(e.p)}</strong><span><button type="button" class="m" disabled>−</button><b>0</b><button type="button" class="a">+</button></span></div></article>`).join('');
 
   function remaining(e){let inCart=CQ(e.c);if(inCart==null)inCart=0;return e.stockExact==null?null:Math.max(0,e.stockExact-inCart)}
@@ -65,15 +68,15 @@ async function init(){
   function U(){
     let t=T(),s=S(),mm=MM(),box=BX(s),sel=p.filter(e=>e.q),cap=box?.cap||BS().at(-1)?.cap||1,cc=C();
     $('.zd',b).textContent=m.dataset.description||`Vyberte ${cc.length>1?'jednu z povolených kombinací':mm[0]===mm[1]?'přesně '+mm[1]:mm[0]+'–'+mm[1]+' položek'}.`;
-    A('.zy button',b).forEach(q=>q.classList.toggle('on',q.dataset.t===cur));A('article',g).forEach(c=>{let e=p[+c.dataset.k],v=VIS(e);c.hidden=!v;c.classList.toggle('on',!!e.q);c.classList.toggle('out',e.out);$('span b',c).textContent=e.q;$('.m',c).disabled=!e.q;$('.a',c).disabled=!can(e);$('.stock',c).textContent=e.out?'Vyprodáno':e.stockText?`Skladem: ${e.stockText}`:''});
+    A('.zy button',b).forEach(q=>q.classList.toggle('on',q.dataset.t===cur));A('article',g).forEach(c=>{let e=p[+c.dataset.k],v=VIS(e);c.hidden=!v;c.classList.toggle('on',!!e.q);c.classList.toggle('out',e.out);$('span b',c).textContent=e.q;$('.m',c).disabled=!e.q||e.g==='zaklad';$('.a',c).disabled=!can(e);$('.stock',c).textContent=e.out?'Vyprodáno':e.stockText?`Skladem: ${e.stockText}`:''});
     $('.zbinfo',b).innerHTML=s?`<small>Krabice <b>${H(box?.n||'Příliš velké')}</b></small><small>Využití <b>${s}/${box?.cap||'—'}</b></small>`:'<small>Krabice <b>—</b></small>';
     $('.zc',b).textContent=`${t} položek`;$('aside i u',b).style.width=`${Math.min(100,s/cap*100)}%`;
     $('.zr',b).innerHTML=cc.length?cc.map(c=>`<small class="${CM(c)?'ok':''}">${H(comboLabel(c))}<b>${CM(c)?'✓':''}</b></small>`).join(''):R().map(e=>{let n=G(e.g);return`<small class="${n>=e.min&&n<=e.max?'ok':''}">${H(e.n)} <b>${n}/${e.min===e.max?e.min:e.min+'–'+e.max}</b></small>`}).join('');
     $('.zs',b).innerHTML=sel.map(e=>`<small>${e.q}× ${H(e.n||e.c)}<b>${e.p==null?'':F(e.p*e.q)}</b></small>`).join('');$('.zt',b).textContent=F(sel.reduce((a,e)=>a+(e.p||0)*e.q,0));$('aside>button',b).disabled=!V();
   }
 
-  $('.zy',b)?.addEventListener('click',e=>{let q=e.target.closest('button[data-t]');if(!q||q.dataset.t===cur)return;p.forEach(x=>x.q=0);cur=q.dataset.t;U()});
-  g.onclick=e=>{let q=e.target.closest('.a,.m');if(!q)return;e.preventDefault();e.stopPropagation();let v=p[+q.closest('article').dataset.k];if(q.classList.contains('a')){if(can(v))v.q++}else if(v.q)v.q--;U()};
+  $('.zy',b)?.addEventListener('click',e=>{let q=e.target.closest('button[data-t]');if(!q||q.dataset.t===cur)return;p.forEach(x=>x.q=0);cur=q.dataset.t;selectBase();U()});
+  g.onclick=e=>{let q=e.target.closest('.a,.m');if(!q)return;e.preventDefault();e.stopPropagation();let v=p[+q.closest('article').dataset.k];if(q.classList.contains('a')){if(can(v))v.q++}else if(v.q&&v.g!=='zaklad')v.q--;U()};
   const ADD=e=>new Promise((ok,no)=>{let before=CQ(e.c),done=0,timer,finish=()=>{if(done)return;done=1;clearTimeout(timer);D.removeEventListener('ShoptetCartUpdated',hit);let after=CQ(e.c);before==null||after==null||after>=before+e.q?ok():no()};let hit=()=>setTimeout(finish,80);D.addEventListener('ShoptetCartUpdated',hit);timer=setTimeout(finish,3500);try{shoptet.cartShared.addToCart({productCode:e.c,amount:e.q},true)}catch(x){done=1;clearTimeout(timer);D.removeEventListener('ShoptetCartUpdated',hit);no(x)}});
   $('aside>button',b).onclick=async e=>{e.preventDefault();e.stopPropagation();let q=e.currentTarget,n=$('aside>em',b),sel=p.filter(x=>x.q);q.disabled=true;n.textContent='Kontroluji sklad…';await Promise.all(sel.map(load));let bad=sel.find(x=>x.out||(x.stockExact!=null&&x.q+(CQ(x.c)||0)>x.stockExact));if(bad){n.textContent=`Nedostatečný sklad: ${bad.n}`;U();return}let box=BX(S());if(!box){n.textContent='Obsah se nevejde do žádné krabice.';U();return}n.textContent='Přidávám…';try{for(let x of sel)await ADD(x);let a=LB();a.push({t:Date.now(),type:TY().n,box:box.n,size:S(),cap:box.cap,items:sel.map(x=>({c:x.c,n:x.n||x.c,q:x.q}))});SB(a);note();n.textContent='Balíček přidán do košíku.';p.forEach(x=>x.q=0);U()}catch{n.textContent='Část balíčku se nepodařilo přidat. Zkontrolujte košík.';U()}};
   U();
