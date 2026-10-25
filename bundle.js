@@ -22,7 +22,8 @@ function noteInit(){
 
 async function init(){
   let m=$('.bundle_menu'),l=$('.bundle-source-list');if(!m||!l||$('#zb'))return;
-  let types=A('.bundle-type').map(e=>({id:e.dataset.id||e.dataset.name,n:e.dataset.name||e.dataset.id,min:e.dataset.min==null?null:N(e.dataset.min),max:e.dataset.max==null?null:N(e.dataset.max)}));
+  let typeEls=A('.bundle-type'),disabledTypes=typeEls.filter(e=>['false','0','no','off'].includes(String(e.dataset.enabled||'true').toLowerCase())),types=typeEls.filter(e=>!['false','0','no','off'].includes(String(e.dataset.enabled||'true').toLowerCase())).map(e=>({id:e.dataset.id||e.dataset.name,n:e.dataset.name||e.dataset.id,min:e.dataset.min==null?null:N(e.dataset.min),max:e.dataset.max==null?null:N(e.dataset.max)}));
+  if(typeEls.length&&!types.length){m.hidden=l.hidden=true;D.body.classList.add('zb-on');let b=D.createElement('section');b.id='zb';b.innerHTML=`<header><b>${H(m.dataset.title||disabledTypes[0]?.dataset.name||'Dárkový balíček')}</b><small>${H(disabledTypes[0]?.dataset.disabledText||'Tento balíček je momentálně nedostupný.')}</small></header>`;($('.p-info-wrapper')||m.parentElement).append(b);return}
   if(!types.length)types=[{id:'all',n:m.dataset.bundleName||'Balíček',min:null,max:null}];let cur=types[0].id;
   let boxes=A('.bundle-box').map(e=>({n:e.dataset.name||'Krabice',cap:N(e.dataset.capacity),t:(e.dataset.types||'').split(',').map(x=>x.trim()).filter(Boolean)})).filter(e=>e.cap>0).sort((a,b)=>a.cap-b.cap);
   let rules=A('.bundle-rule').map(e=>({t:e.dataset.type||'',g:e.dataset.group||'',n:e.dataset.label||e.dataset.group||'',min:N(e.dataset.min),max:N(e.dataset.max,99)}));
