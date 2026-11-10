@@ -78,7 +78,84 @@ async function init(){
   $('.zy',b)?.addEventListener('click',e=>{let q=e.target.closest('button[data-t]');if(!q||q.dataset.t===cur)return;p.forEach(x=>x.q=0);cur=q.dataset.t;selectBase();U()});
   g.onclick=e=>{let q=e.target.closest('.a,.m');if(!q)return;e.preventDefault();e.stopPropagation();let v=p[+q.closest('article').dataset.k];if(q.classList.contains('a')){if(can(v))v.q++}else if(v.q&&v.g!=='zaklad')v.q--;U()};
   const ADD=e=>new Promise((ok,no)=>{let before=CQ(e.c),done=0,timer,finish=()=>{if(done)return;done=1;clearTimeout(timer);D.removeEventListener('ShoptetCartUpdated',hit);let after=CQ(e.c);before==null||after==null||after>=before+e.q?ok():no()};let hit=()=>setTimeout(finish,80);D.addEventListener('ShoptetCartUpdated',hit);timer=setTimeout(finish,3500);try{shoptet.cartShared.addToCart({productCode:e.c,amount:e.q},true)}catch(x){done=1;clearTimeout(timer);D.removeEventListener('ShoptetCartUpdated',hit);no(x)}});
-  $('aside>button',b).onclick=async e=>{e.preventDefault();e.stopPropagation();let q=e.currentTarget,n=$('aside>em',b),sel=p.filter(x=>x.q);q.disabled=true;n.textContent='Kontroluji sklad…';await Promise.all(sel.map(load));let bad=sel.find(x=>x.out||(x.stockExact!=null&&x.q+(CQ(x.c)||0)>x.stockExact));if(bad){n.textContent=`Nedostatečný sklad: ${bad.n}`;U();return}let box=BX(S());if(!box){n.textContent='Obsah se nevejde do žádné krabice.';U();return}n.textContent='Přidávám…';try{for(let x of sel)await ADD(x);let a=LB();a.push({t:Date.now(),type:TY().n,box:box.n,size:S(),cap:box.cap,items:sel.map(x=>({c:x.c,n:x.n||x.c,q:x.q}))});SB(a);note();n.textContent='Balíček přidán do košíku.';p.forEach(x=>x.q=0);U()}catch{n.textContent='Část balíčku se nepodařilo přidat. Zkontrolujte košík.';U()}};
+  $('aside>button',b).onclick=async e=>{
+    e.preventDefault();
+    e.stopPropagation();
+
+    let q=e.currentTarget;
+    let n=$('aside>em',b);
+    let sel=p.filter(x=>x.q);
+
+    q.disabled=true;
+    n.textContent='Kontroluji sklad…';
+
+    await Promise.all(sel.map(load));
+
+    let bad=sel.find(x=>
+        x.out ||
+        (x.stockExact!=null && x.q+(CQ(x.c)||0)>x.stockExact)
+    );
+
+    if(bad){
+        n.textContent=`Nedostatečný sklad: ${bad.n}`;
+        U();
+        return;
+    }
+
+    let box=BX(S());
+
+    if(!box){
+        n.textContent='Obsah se nevejde do žádné krabice.';
+        U();
+        return;
+    }
+
+    n.textContent='Přidávám…';
+
+    try{
+        const parentCode=(m.dataset.parentCode||'').trim();
+
+        if(!parentCode){
+            throw new Error('Missing parent product code');
+        }
+
+        // Add the bundle product itself (the box)
+        await ADD({c:parentCode,q:1});
+
+        // Add all selected ingredients
+        for(let x of sel){
+            await ADD(x);
+        }
+
+        let a=LB();
+
+        a.push({
+            t:Date.now(),
+            type:TY().n,
+            box:box.n,
+            size:S(),
+            cap:box.cap,
+            items:sel.map(x=>({
+                c:x.c,
+                n:x.n||x.c,
+                q:x.q
+            }))
+        });
+
+        SB(a);
+        note();
+
+        n.textContent='Balíček přidán do košíku.';
+
+        p.forEach(x=>x.q=0);
+        U();
+
+    }catch(err){
+        console.error('[Bundle] Add to cart failed:',err);
+        n.textContent='Část balíčku se nepodařilo přidat. Zkontrolujte košík.';
+        U();
+    }
+};
   U();
 }
 let START=()=>{noteInit();init()};D.readyState==='loading'?D.addEventListener('DOMContentLoaded',START):START();
