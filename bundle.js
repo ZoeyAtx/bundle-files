@@ -1,4 +1,4 @@
-/* Universal Shoptet bundle engine v6.3 — configure products and boxes in HTML only. */
+/* Universal Shoptet bundle engine v6.4 — configure products and boxes in HTML only. */
 (() => {
   'use strict';
   if (window.__zbBundleV6) return;
@@ -15,7 +15,7 @@
   const BEGIN = '--- DÁRKOVÉ BALÍČKY ---';
   const END = '--- KONEC DÁRKOVÝCH BALÍČKŮ ---';
   const DEBUG = false; // Set true for storefront diagnostics.
-  const log = (...args) => { if (DEBUG) console.log('[ZB v6.3]', ...args); };
+  const log = (...args) => { if (DEBUG) console.log('[ZB v6.4]', ...args); };
   const dl = k => { try { return typeof getShoptetDataLayer === 'function' ? getShoptetDataLayer(k) : null; } catch { return null; } };
   const api = () => window.shoptet?.cartShared;
   const getRecords = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(r => r && r.id && Array.isArray(r.items) && r.box?.code) : []; } catch { return []; } };
@@ -300,19 +300,124 @@
       cart:cartLines().map(x => [x.code,x.q,x.itemId]),
       main:main.map(x => x.dataset.microSku), recap:recaps.map(x => x.dataset.microSku)
     });
-    if (signature === renderSignature && (records.length === 0 || !!$('.zb-virtual'))) return;
+    const required = needs(records);
+    const hasAllParts = rows => [...required.keys()].every(c => rows.some(row => row.dataset.microSku === c));
+    const mainReady = !hasAllParts(main) || (
+      main.filter(row => required.has(row.dataset.microSku)).every(row => row.classList.contains('zb-hidden-original')) &&
+      $$('.zb-cart-bundle').length === records.length);
+    const recapParents = [...new Set(recaps.map(row => row.parentElement))];
+    const recapReady = recapParents.every(parent => {
+      const rows = recaps.filter(row => row.parentElement === parent);
+      return !hasAllParts(rows) || (
+        rows.filter(row => required.has(row.dataset.microSku)).every(row => row.classList.contains('zb-hidden-original')) &&
+        $$('.zb-recap-bundle',parent).length === records.length);
+    });
+    if (signature === renderSignature && (records.length === 0 || (mainReady && recapReady))) return;
     renderSignature = signature;
-    $$('.zb-virtual').forEach(el => el.remove());
-    $$('.zb-hidden-original').forEach(el => el.classList.remove('zb-hidden-original'));
+    $$('.zb-cart-bundle, .zb-cart-extra, .zb-recap-bundle, .zb-recap-extra').forEach(el => el.remove());
+    $$('.removeable.zb-hidden-original, .order-summary-top .cart-items .cart-item.zb-hidden-original').forEach(el => el.classList.remove('zb-hidden-original'));
     if (!records.length) return;
     renderGroupContainer(main, records, true);
     const parents = [...new Set(recaps.map(el => el.parentElement))];
     for (const parent of parents) renderGroupContainer(recaps.filter(el => el.parentElement === parent), records, false);
   }
+  // Shoptet's hover-cart is separate from the full cart and checkout. It is
+  // frequently rebuilt on hover, so render directly into each live popup.
+  // Do not alter the real Shoptet forms or cart totals; only hide their rows.
+  function widgetRowQty(row) {
+    return Math.max(0, num($('input.amount[name="amount"], input.amount',row)?.value, 0));
+  }
+  function widgetRowPrice(row) {
+    // The popup shows LINE totals (e.g. 660 Kč for three 220 Kč items).
+    const text = $('[data-testid="cartWidgetProductPrice"]',row)?.textContent ||
+      $('.cart-widget-product-name > span',row)?.textContent || '';
+    return priceFromText(text);
+  }
+  function makeWidgetRow(r, total) {
+    const div=D.createElement('div');
+    div.className='zb-virtual zb-widget-bundle';
+    div.dataset.zbBundleId=r.id;
+    div.innerHTML=`<div class="zb-widget-head">${bundleImage(r)}<div class="zb-widget-meta"><strong class="zb-widget-title">Balíček: ${esc(r.type)}</strong><small>Dárkový balíček · 1×</small><strong class="zb-widget-price">${money(total,r.currency,r.locale)}</strong></div></div>${bundleDetails(r)}<a class="zb-widget-edit" href="/kosik/">Upravit v košíku</a>`;
+    return div;
+  }
+  function makeWidgetExtra(row, amount, total, currency, locale) {
+    const div=D.createElement('div');
+    div.className='zb-virtual zb-widget-extra';
+    const originalImg=$('.cart-widget-product-image img',row);
+    const img=originalImg ? imageUrl(originalImg.getAttribute('src') || originalImg.dataset.src) : '';
+    const originalLink=$('.cart-widget-product-name a',row);
+    const name=originalLink?.textContent.trim() || row.dataset.microSku;
+    // Existing product URL is safe to use as a link, not as HTML.
+    const href=originalLink?.getAttribute('href') || '/kosik/';
+    const a=D.createElement('a');a.href=href;
+    if(img){const picture=D.createElement('img');picture.src=img;picture.alt='';picture.className='zb-widget-extra-image';a.append(picture);}
+    else a.textContent='Produkt';
+    const meta=D.createElement('div');meta.className='zb-widget-meta';
+    meta.innerHTML=`<strong class="zb-widget-title">${esc(name)}</strong><small>Samostatně · ${amount}×</small><strong class="zb-widget-price">${money(total,currency,locale)}</strong><a class="zb-widget-edit" href="/kosik/">Upravit v košíku</a>`;
+    div.append(a,meta);
+    return div;
+  }
+  function renderWidget() {
+    const records=getRecords();
+    const required=needs(records);
+    // The popup can be present before hover, inserted on hover, or replaced in place.
+    for(const container of $$('#cart-widget .cart-widget-products-inner')) {
+      const rows=$$('.cart-widget-product[data-micro-sku]',container);
+      const signature=JSON.stringify({
+        records:records.map(r=>[r.id,r.type,r.image,r.box?.code,r.items.map(x=>[x.code,x.q])]),
+        rows:rows.map(row=>[row.dataset.microSku,widgetRowQty(row),widgetRowPrice(row),$('input[name="itemId"]',row)?.value])
+      });
+      const grouped=$$('.zb-widget-bundle',container);
+      const hidden=rows.filter(row=>required.has(row.dataset.microSku));
+      const alreadyDone=records.length ? grouped.length===records.length &&
+        hidden.length>0 && hidden.every(row=>row.classList.contains('zb-hidden-original')) :
+        !grouped.length && !$$('.zb-widget-extra,.cart-widget-product.zb-hidden-original',container).length;
+      if(container.dataset.zbWidgetSignature===signature && alreadyDone) continue;
+      container.dataset.zbWidgetSignature=signature;
+      $$('.zb-widget-bundle,.zb-widget-extra',container).forEach(el=>el.remove());
+      $$('.cart-widget-product.zb-hidden-original',container).forEach(el=>el.classList.remove('zb-hidden-original'));
+      if(!records.length || !rows.length) continue;
+      const byCode=new Map(), counts=new Map(), unitPrices=new Map();
+      for(const row of rows) {
+        const c=row.dataset.microSku, count=widgetRowQty(row), total=widgetRowPrice(row);
+        if(!byCode.has(c)) byCode.set(c,row);
+        counts.set(c,(counts.get(c)||0)+count);
+        if(total!==null) {
+          const old=unitPrices.get(c) || {total:0,qty:0};
+          old.total+=total;old.qty+=count;unitPrices.set(c,old);
+        }
+      }
+      // If Shoptet is still loading the widget, leave every native item visible.
+      if([...required].some(([c,q])=>!byCode.has(c) || (counts.get(c)||0)<q)) continue;
+      const units=new Map();
+      for(const [c, row] of byCode) {
+        const observed=unitPrices.get(c);
+        const fallback=records.flatMap(partList).find(p=>p.code===c)?.price;
+        const layerUnit=cartLines().find(x=>x.code===c)?.unitPrice;
+        units.set(c,observed?.qty>0 ? observed.total/observed.qty :
+          (Number.isFinite(layerUnit) ? layerUnit : fallback));
+      }
+      const anchor=rows.find(row=>required.has(row.dataset.microSku));
+      for(const r of records) {
+        const parts=partList(r);
+        const allKnown=parts.every(p=>Number.isFinite(units.get(p.code) ?? p.price));
+        const total=allKnown ? sumBy(parts,p=>(units.get(p.code) ?? p.price)*p.q) : NaN;
+        anchor.before(makeWidgetRow(r,total));
+      }
+      for(const [c,bundled] of required) {
+        const standalone=(counts.get(c)||0)-bundled;
+        if(standalone>0) {
+          const row=byCode.get(c), base=records[0], unit=units.get(c);
+          anchor.before(makeWidgetExtra(row,standalone,Number.isFinite(unit)?unit*standalone:NaN,base.currency,base.locale));
+        }
+      }
+      for(const row of rows) if(required.has(row.dataset.microSku)) row.classList.add('zb-hidden-original');
+    }
+  }
   function scheduleRender() {
     if (renderPending) return;
     renderPending = true;
-    setTimeout(() => { renderPending = false; renderGroups(); syncNote(); }, 120);
+    setTimeout(() => { renderPending = false; renderGroups(); renderWidget(); syncNote(); }, 120);
   }
   let removing = false;
   async function removeBundle(id) {
@@ -363,6 +468,7 @@
     D.addEventListener('ShoptetCartUpdated', () => { renderSignature=''; scheduleRender(); });
     D.addEventListener('ShoptetDataLayerUpdated', scheduleRender);
     D.addEventListener('ShoptetDOMContentChanged', scheduleRender);
+    D.addEventListener('pointerover', e => { if(e.target?.closest?.('#cart-widget')) scheduleRender(); }, true);
     new MutationObserver(scheduleRender).observe(D.body, {childList:true,subtree:true});
     scheduleRender();
   }

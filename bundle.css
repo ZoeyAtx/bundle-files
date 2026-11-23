@@ -1,4 +1,4 @@
-/* Complete CSS: your original V5 stylesheet + the V6.3 additions. */
+/* Complete CSS: your original V5 stylesheet + the V6.4 additions. */
 .bundle_menu,.bundle-source-list,.bundle-rules,.bundle-types,.bundle-boxes,.bundle-combinations{display:none!important}
 .zb-on .p-info-wrapper>.add-to-cart,.zb-on .p-info-wrapper>.p-info-grid,.zb-on .p-info-wrapper>.p-info-headline,.zb-on .p-info-wrapper .detail-price-block,.zb-on .p-info-wrapper .detail-availability-block,.zb-on .p-info-wrapper .p-final-price-wrapper,.zb-on .p-info-wrapper .availability-value{display:none!important}
 #zb{width:100%;max-width:100%;min-width:0;box-sizing:border-box;margin:0 0 24px;padding:18px;background:#fff;font-family:var(--template-font,"Open Sans"),sans-serif}
@@ -19,7 +19,7 @@
 #zb aside>button{width:100%;padding:12px;border:0;border-radius:22px;background:var(--color-secondary,#27ae60);color:#fff;font-weight:700;cursor:pointer}#zb aside>button:disabled{opacity:.4;cursor:not-allowed}#zb aside>em{display:block;text-align:center;margin-top:8px;font-size:12px}
 @media(max-width:550px){.zb-products{grid-template-columns:1fr}}
 
-/* V6.3 additions */
+/* V6.4 additions */
 .bundle-rules{display:none!important}
 .zb-hidden-original{display:none!important}
 .zy button:disabled{opacity:.35;cursor:not-allowed}
@@ -58,3 +58,24 @@
 
 @media(max-width:600px){.zb-cart-bundle td,.zb-cart-extra td{padding:6px}}
 @media(max-width:260px){.zb-recap-bundle .zb-recap-head{grid-template-columns:42px minmax(0,1fr)!important;gap:7px}.zb-recap-bundle .zb-bundle-image{width:42px;height:42px}}
+
+/* V6.4: Shoptet hover-cart preview; don't reuse Shoptet's narrow product grid. */
+#cart-widget .cart-widget-products-inner > .zb-widget-bundle,
+#cart-widget .cart-widget-products-inner > .zb-widget-extra{
+  display:block!important;float:none!important;clear:both;box-sizing:border-box;
+  width:100%;max-width:100%;min-width:0;grid-column:1/-1!important;align-self:stretch;margin:7px 0;padding:11px;
+  border:1px solid #e5e9e5;border-radius:8px;background:#fff;
+  color:inherit;text-align:left;white-space:normal;
+}
+#cart-widget .zb-widget-head{display:grid!important;grid-template-columns:58px minmax(0,1fr)!important;gap:10px;align-items:start;width:100%;min-width:0}
+#cart-widget .zb-widget-head .zb-bundle-image{width:58px;height:58px;max-width:100%;object-fit:contain}
+#cart-widget .zb-widget-meta{display:flex;flex-direction:column;align-items:flex-start;min-width:0;max-width:100%;gap:3px;overflow-wrap:anywhere;white-space:normal}
+#cart-widget .zb-widget-title{display:block;font-size:13px;line-height:1.35;font-weight:700;color:inherit;overflow-wrap:anywhere}
+#cart-widget .zb-widget-meta small{display:block;color:#777;font-size:11px;line-height:1.3}
+#cart-widget .zb-widget-price{display:block;margin-top:2px;font-size:14px;line-height:1.3;font-weight:700;color:inherit}
+#cart-widget .zb-widget-bundle .zb-bundle-details{margin-top:9px;padding-top:8px}
+#cart-widget .zb-widget-bundle .zb-bundle-details summary{font-size:12px}
+#cart-widget .zb-widget-edit{display:inline-block;margin-top:8px;font-size:11px;line-height:1.4;text-decoration:underline;color:inherit}
+#cart-widget .zb-widget-extra{display:grid!important;grid-template-columns:58px minmax(0,1fr)!important;gap:10px;align-items:start}
+#cart-widget .zb-widget-extra-image{display:block;width:58px;height:58px;object-fit:contain;border-radius:6px}
+#cart-widget .cart-widget-product.zb-hidden-original{display:none!important}
