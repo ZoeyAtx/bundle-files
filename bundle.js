@@ -1,4 +1,4 @@
-/* Universal Shoptet bundle engine v6.5 — configure products and boxes in HTML only. */
+/* Universal Shoptet bundle engine v6.6 — configure products and boxes in HTML only. */
 (() => {
   'use strict';
   if (window.__zbBundleV6) return;
@@ -15,7 +15,7 @@
   const BEGIN = '--- DÁRKOVÉ BALÍČKY ---';
   const END = '--- KONEC DÁRKOVÝCH BALÍČKŮ ---';
   const DEBUG = false; // Set true for storefront diagnostics.
-  const log = (...args) => { if (DEBUG) console.log('[ZB v6.5]', ...args); };
+  const log = (...args) => { if (DEBUG) console.log('[ZB v6.6]', ...args); };
   const dl = k => { try { return typeof getShoptetDataLayer === 'function' ? getShoptetDataLayer(k) : null; } catch { return null; } };
   const api = () => window.shoptet?.cartShared;
   const getRecords = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(r => r && r.id && Array.isArray(r.items) && r.box?.code) : []; } catch { return []; } };
@@ -340,29 +340,57 @@
       $('.cart-widget-product-name > span',row)?.textContent || '';
     return priceFromText(text);
   }
-  function makeWidgetRow(r, total) {
-    const div=D.createElement('div');
-    div.className='zb-virtual zb-widget-bundle';
+  const widgetMoney=(n,currency='CZK',locale='cs-CZ')=>{
+    if(!Number.isFinite(n))return 'Cena nedostupná';
+    try{return new Intl.NumberFormat(locale,{style:'currency',currency,minimumFractionDigits:0,maximumFractionDigits:2}).format(n);}
+    catch{return money(n,currency,locale);}
+  };
+  // Clone Shoptet's *real* popup product row, rather than drawing a custom
+  // card. Its own theme CSS then controls the image, title, quantity and bin.
+  // Strip the native form actions, item IDs and microdata: a virtual row must
+  // never submit an individual ingredient or be treated as a real cart item.
+  function nativeWidgetRow(source, opts) {
+    const div=source.cloneNode(true);
+    div.classList.add(opts.bundle ? 'zb-widget-bundle' : 'zb-widget-extra');
+    ['data-micro','data-micro-sku','data-micro-identifier','data-testid'].forEach(a=>div.removeAttribute(a));
+    $$('[data-testid]',div).forEach(el=>el.removeAttribute('data-testid'));
+    $$('form',div).forEach(form=>form.remove());
+    const href=opts.href || '/kosik/';
+    const picture=$('.cart-widget-product-image',div);
+    const img=imageUrl(opts.image);
+    if(picture) picture.innerHTML=`<a href="${esc(href)}">${img?`<img src="${esc(img)}" alt="${esc(opts.name)}" width="100" height="100" loading="lazy">`:''}</a>`;
+    let name=$('.cart-widget-product-name',div);
+    if(!name){name=D.createElement('div');name.className='cart-widget-product-name';div.append(name);}
+    const plus=opts.bundle ? `data-zb-duplicate="${esc(opts.id)}"` : `data-zb-extra="${esc(opts.code)}" data-change="1"`;
+    const minus=opts.bundle ? `data-zb-remove="${esc(opts.id)}"` : `data-zb-extra="${esc(opts.code)}" data-change="-1"`;
+    name.innerHTML=`<strong><a href="${esc(href)}">${esc(opts.name)}</a></strong>`+
+      `<span>${widgetMoney(opts.total,opts.currency,opts.locale)}</span>`+
+      `<div class="cart-widget-product-amount"><div class="quantity-form"><span class="quantity">`+
+      `<label><span class="sr-only">Množství</span><input type="number" class="amount" value="${opts.amount}" min="1" readonly aria-label="Množství: ${opts.amount}"></label>`+
+      `<button class="increase" type="button" ${plus} aria-label="${opts.bundle?'Přidat další stejný balíček':'Zvýšit množství o 1'}"><span class="increase__sign">+</span></button>`+
+      `<button class="decrease" type="button" ${minus} aria-label="${opts.bundle?'Odebrat tento balíček':'Snížit množství o 1'}"><span class="decrease__sign">−</span></button>`+
+      `</span></div></div>`;
+    let remove=$('.cart-widget-product-delete',div);
+    if(!remove){remove=D.createElement('div');remove.className='cart-widget-product-delete';div.append(remove);}
+    const deleteAttr=opts.bundle ? `data-zb-remove="${esc(opts.id)}"` : `data-zb-extra-remove="${esc(opts.code)}"`;
+    remove.innerHTML=`<div class="inline"><button type="button" class="remove-item" ${deleteAttr} aria-label="${opts.bundle?'Odebrat celý balíček':'Odebrat samostatný produkt'}"><span class="sr-only">Odstranit z košíku</span></button></div>`;
+    return div;
+  }
+  function makeWidgetRow(r, total, source) {
+    const div=nativeWidgetRow(source,{
+      bundle:true,id:r.id,name:r.type,image:r.image,
+      href:r.productUrl || '/kosik/',amount:1,total,currency:r.currency,locale:r.locale
+    });
     div.dataset.zbBundleId=r.id;
-    div.innerHTML=`<div class="zb-widget-head">${bundleImage(r)}<div class="zb-widget-meta"><strong class="zb-widget-title">Balíček: ${esc(r.type)}</strong><small>Dárkový balíček · 1×</small><strong class="zb-widget-price">${money(total,r.currency,r.locale)}</strong></div></div>${bundleDetails(r)}<div class="zb-widget-actions"><a class="zb-widget-edit" href="/kosik/">Upravit v košíku</a><button type="button" class="zb-widget-remove" data-zb-remove="${esc(r.id)}" aria-label="Odebrat celý balíček ${esc(r.type)}">Odebrat balíček</button></div>`;
     return div;
   }
   function makeWidgetExtra(row, amount, total, currency, locale) {
-    const div=D.createElement('div');
-    div.className='zb-virtual zb-widget-extra';
-    const originalImg=$('.cart-widget-product-image img',row);
-    const img=originalImg ? imageUrl(originalImg.getAttribute('src') || originalImg.dataset.src) : '';
-    const originalLink=$('.cart-widget-product-name a',row);
-    const name=originalLink?.textContent.trim() || row.dataset.microSku;
-    // Existing product URL is safe to use as a link, not as HTML.
-    const href=originalLink?.getAttribute('href') || '/kosik/';
-    const a=D.createElement('a');a.href=href;
-    if(img){const picture=D.createElement('img');picture.src=img;picture.alt='';picture.className='zb-widget-extra-image';a.append(picture);}
-    else a.textContent='Produkt';
-    const meta=D.createElement('div');meta.className='zb-widget-meta';
-    meta.innerHTML=`<strong class="zb-widget-title">${esc(name)}</strong><small>Samostatně · ${amount}×</small><strong class="zb-widget-price">${money(total,currency,locale)}</strong><a class="zb-widget-edit" href="/kosik/">Upravit v košíku</a>`;
-    div.append(a,meta);
-    return div;
+    const link=$('.cart-widget-product-name a',row);
+    return nativeWidgetRow(row,{
+      bundle:false,code:row.dataset.microSku,name:link?.textContent.trim()||row.dataset.microSku,
+      image:$('.cart-widget-product-image img',row)?.getAttribute('src')||'',
+      href:link?.getAttribute('href')||'/kosik/',amount,total,currency,locale
+    });
   }
   function renderWidget() {
     const records=getRecords();
@@ -409,7 +437,7 @@
         const parts=partList(r);
         const allKnown=parts.every(p=>Number.isFinite(units.get(p.code) ?? p.price));
         const total=allKnown ? sumBy(parts,p=>(units.get(p.code) ?? p.price)*p.q) : NaN;
-        anchor.before(makeWidgetRow(r,total));
+        anchor.before(makeWidgetRow(r,total,byCode.get(r.box.code)||anchor));
       }
       for(const [c,bundled] of required) {
         const standalone=(counts.get(c)||0)-bundled;
@@ -427,6 +455,28 @@
     setTimeout(() => { renderPending = false; renderGroups(); renderWidget(); syncNote(); }, 120);
   }
   let removing = false;
+  async function duplicateBundle(id) {
+    if (removing) return;
+    const records=reconcileRecords();
+    const target=records.find(r=>r.id===id);
+    if(!target) return;
+    const parts=groupedParts(target);
+    const snapshot=new Map(parts.map(p=>[p.code,cartCount(p.code)]));
+    removing=true;
+    try {
+      for(const p of parts) await addCart(p.code,p.q);
+      const copy={...target,id:`${Date.now()}-${Math.random().toString(36).slice(2,10)}`,t:Date.now()};
+      saveRecords([...getRecords(),copy]);
+      syncNote();renderSignature='';scheduleRender();
+      if(!$('.removeable[data-micro-sku]')) location.reload();
+    } catch(err) {
+      const restored=await rollbackTo(snapshot);
+      console.error('[ZB] Duplicate bundle failed:',err);
+      alert(restored ? 'Další balíček se nepodařilo přidat. Košík byl vrácen do původního stavu.' :
+        'Další balíček se nepodařilo přidat a vrácení změn nebylo úplné. Zkontrolujte košík.');
+      scheduleRender();
+    } finally {removing=false;}
+  }
   async function removeBundle(id) {
     if (removing) return;
     const records = reconcileRecords();
@@ -454,21 +504,36 @@
     } finally { removing = false; }
   }
   function initCartUI() {
+    // Capture before Shoptet's delegated .increase/.decrease/.remove-item handlers.
     D.addEventListener('click', async e => {
+      const controlled=e.target.closest?.('[data-zb-remove],[data-zb-duplicate],[data-zb-extra],[data-zb-extra-remove]');
+      if(!controlled) return;
+      e.preventDefault();e.stopImmediatePropagation();
+      const duplicate=e.target.closest('[data-zb-duplicate]');
+      if(duplicate){ await duplicateBundle(duplicate.dataset.zbDuplicate);return; }
       const remove = e.target.closest('[data-zb-remove]');
       if (remove) {
-        e.preventDefault();
         if (removing) return;
-        const label=remove.textContent;
         remove.disabled=true;
-        remove.textContent='Odebírám…';
+        remove.setAttribute('aria-busy','true');
         try { await removeBundle(remove.dataset.zbRemove); }
-        finally { if (remove.isConnected) { remove.disabled=false; remove.textContent=label; } }
+        finally { if (remove.isConnected) { remove.disabled=false; remove.removeAttribute('aria-busy'); } }
+        return;
+      }
+      const extraRemove=e.target.closest('[data-zb-extra-remove]');
+      if(extraRemove){
+        if(removing)return;
+        const c=extraRemove.dataset.zbExtraRemove;
+        const standalone=cartCount(c)-(needs(getRecords()).get(c)||0);
+        if(standalone<=0)return;
+        removing=true;
+        try{await subtractCart(c,standalone);renderSignature='';scheduleRender();}
+        catch(err){console.error('[ZB] Standalone removal failed:',err);alert('Nepodařilo se odebrat samostatný produkt.');}
+        finally{removing=false;}
         return;
       }
       const extra = e.target.closest('[data-zb-extra]');
       if (!extra || removing) return;
-      e.preventDefault();
       const c = extra.dataset.zbExtra, change = num(extra.dataset.change);
       const bundled = needs(getRecords()).get(c) || 0;
       if (change < 0 && cartCount(c) <= bundled) return;
@@ -480,7 +545,7 @@
         scheduleRender();
       } catch (err) { console.error('[ZB] Standalone quantity change failed:',err); alert('Nepodařilo se změnit množství.'); }
       finally { removing = false; }
-    });
+    }, true);
     D.addEventListener('ShoptetCartUpdated', () => { renderSignature=''; scheduleRender(); });
     D.addEventListener('ShoptetDataLayerUpdated', scheduleRender);
     D.addEventListener('ShoptetDOMContentChanged', scheduleRender);
@@ -725,7 +790,7 @@
         const record={
           id:`${Date.now()}-${Math.random().toString(36).slice(2,10)}`,
           t:Date.now(), type:activeType().name, typeId:current,
-          currency,locale,size:size(),image:configuratorImage,
+          currency,locale,size:size(),image:configuratorImage,productUrl:location.pathname,
           box:{code:box.code,name:box.name,capacity:box.capacity,price:box.price},
           items:selected.map(p=>({code:p.code,name:p.name,q:p.q,price:p.price}))
         };
