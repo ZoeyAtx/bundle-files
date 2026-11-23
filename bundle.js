@@ -1,4 +1,4 @@
-/* Universal Shoptet bundle engine v6.4 — configure products and boxes in HTML only. */
+/* Universal Shoptet bundle engine v6.5 — configure products and boxes in HTML only. */
 (() => {
   'use strict';
   if (window.__zbBundleV6) return;
@@ -15,7 +15,7 @@
   const BEGIN = '--- DÁRKOVÉ BALÍČKY ---';
   const END = '--- KONEC DÁRKOVÝCH BALÍČKŮ ---';
   const DEBUG = false; // Set true for storefront diagnostics.
-  const log = (...args) => { if (DEBUG) console.log('[ZB v6.4]', ...args); };
+  const log = (...args) => { if (DEBUG) console.log('[ZB v6.5]', ...args); };
   const dl = k => { try { return typeof getShoptetDataLayer === 'function' ? getShoptetDataLayer(k) : null; } catch { return null; } };
   const api = () => window.shoptet?.cartShared;
   const getRecords = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(r => r && r.id && Array.isArray(r.items) && r.box?.code) : []; } catch { return []; } };
@@ -78,17 +78,24 @@
       priceId:x.priceId ?? x.price_id ?? null,
       unitPrice:Number.isFinite(Number(x.priceWithVat)) ? Number(x.priceWithVat) : null
     })).filter(x => x.code);
-    return $$('.removeable[data-micro-sku]').map(row => ({
+    return $$('.removeable[data-micro-sku], #cart-widget .cart-widget-product[data-micro-sku]').map(row => ({
       code:row.dataset.microSku, q:num($('input.amount[name="amount"]', row)?.value, 0),
       itemId:$('input[name="itemId"]', row)?.value || null,
       priceId:$('input[name="priceId"]', row)?.value || null,
-      unitPrice:priceFromText($('.p-price', row)?.textContent)
+      unitPrice:priceFromText($('.p-price', row)?.textContent) ?? (() => {
+        const total=priceFromText($('[data-testid="cartWidgetProductPrice"]',row)?.textContent);
+        const count=num($('input.amount[name="amount"]',row)?.value,0);
+        return total!==null && count>0 ? total/count : null;
+      })()
     }));
   }
   const cartCount = c => sumBy(cartLines().filter(x => x.code === c), x => x.q);
-  const hasCartData = () => Array.isArray(dl('cart')) || !!$('.removeable[data-micro-sku]');
+  const hasCartData = () => Array.isArray(dl('cart')) || !!$('.removeable[data-micro-sku], #cart-widget .cart-widget-product[data-micro-sku]');
   const readIdsFromDom = (c, line) => {
-    const row = $$('.removeable[data-micro-sku]').find(x => x.dataset.microSku === c);
+    // On normal storefront pages there is no full cart table. Shoptet still
+    // includes the real itemId/priceId in the hidden native hover-cart forms.
+    const row = $$('.removeable[data-micro-sku], #cart-widget .cart-widget-product[data-micro-sku]')
+      .find(x => x.dataset.microSku === c);
     return {
       itemId:line.itemId || (row ? $('input[name="itemId"]', row)?.value : null) || null,
       priceId:line.priceId || (row ? $('input[name="priceId"]', row)?.value : null) || null
@@ -337,7 +344,7 @@
     const div=D.createElement('div');
     div.className='zb-virtual zb-widget-bundle';
     div.dataset.zbBundleId=r.id;
-    div.innerHTML=`<div class="zb-widget-head">${bundleImage(r)}<div class="zb-widget-meta"><strong class="zb-widget-title">Balíček: ${esc(r.type)}</strong><small>Dárkový balíček · 1×</small><strong class="zb-widget-price">${money(total,r.currency,r.locale)}</strong></div></div>${bundleDetails(r)}<a class="zb-widget-edit" href="/kosik/">Upravit v košíku</a>`;
+    div.innerHTML=`<div class="zb-widget-head">${bundleImage(r)}<div class="zb-widget-meta"><strong class="zb-widget-title">Balíček: ${esc(r.type)}</strong><small>Dárkový balíček · 1×</small><strong class="zb-widget-price">${money(total,r.currency,r.locale)}</strong></div></div>${bundleDetails(r)}<div class="zb-widget-actions"><a class="zb-widget-edit" href="/kosik/">Upravit v košíku</a><button type="button" class="zb-widget-remove" data-zb-remove="${esc(r.id)}" aria-label="Odebrat celý balíček ${esc(r.type)}">Odebrat balíček</button></div>`;
     return div;
   }
   function makeWidgetExtra(row, amount, total, currency, locale) {
@@ -449,7 +456,16 @@
   function initCartUI() {
     D.addEventListener('click', async e => {
       const remove = e.target.closest('[data-zb-remove]');
-      if (remove) { e.preventDefault(); await removeBundle(remove.dataset.zbRemove); return; }
+      if (remove) {
+        e.preventDefault();
+        if (removing) return;
+        const label=remove.textContent;
+        remove.disabled=true;
+        remove.textContent='Odebírám…';
+        try { await removeBundle(remove.dataset.zbRemove); }
+        finally { if (remove.isConnected) { remove.disabled=false; remove.textContent=label; } }
+        return;
+      }
       const extra = e.target.closest('[data-zb-extra]');
       if (!extra || removing) return;
       e.preventDefault();

@@ -1,4 +1,4 @@
-/* Complete CSS: your original V5 stylesheet + the V6.4 additions. */
+/* Complete CSS: your original V5 stylesheet + the V6.5 additions. */
 .bundle_menu,.bundle-source-list,.bundle-rules,.bundle-types,.bundle-boxes,.bundle-combinations{display:none!important}
 .zb-on .p-info-wrapper>.add-to-cart,.zb-on .p-info-wrapper>.p-info-grid,.zb-on .p-info-wrapper>.p-info-headline,.zb-on .p-info-wrapper .detail-price-block,.zb-on .p-info-wrapper .detail-availability-block,.zb-on .p-info-wrapper .p-final-price-wrapper,.zb-on .p-info-wrapper .availability-value{display:none!important}
 #zb{width:100%;max-width:100%;min-width:0;box-sizing:border-box;margin:0 0 24px;padding:18px;background:#fff;font-family:var(--template-font,"Open Sans"),sans-serif}
@@ -19,7 +19,7 @@
 #zb aside>button{width:100%;padding:12px;border:0;border-radius:22px;background:var(--color-secondary,#27ae60);color:#fff;font-weight:700;cursor:pointer}#zb aside>button:disabled{opacity:.4;cursor:not-allowed}#zb aside>em{display:block;text-align:center;margin-top:8px;font-size:12px}
 @media(max-width:550px){.zb-products{grid-template-columns:1fr}}
 
-/* V6.4 additions */
+/* V6.5 additions */
 .bundle-rules{display:none!important}
 .zb-hidden-original{display:none!important}
 .zy button:disabled{opacity:.35;cursor:not-allowed}
@@ -59,7 +59,7 @@
 @media(max-width:600px){.zb-cart-bundle td,.zb-cart-extra td{padding:6px}}
 @media(max-width:260px){.zb-recap-bundle .zb-recap-head{grid-template-columns:42px minmax(0,1fr)!important;gap:7px}.zb-recap-bundle .zb-bundle-image{width:42px;height:42px}}
 
-/* V6.4: Shoptet hover-cart preview; don't reuse Shoptet's narrow product grid. */
+/* V6.5: Shoptet hover-cart preview; don't reuse Shoptet's narrow product grid. */
 #cart-widget .cart-widget-products-inner > .zb-widget-bundle,
 #cart-widget .cart-widget-products-inner > .zb-widget-extra{
   display:block!important;float:none!important;clear:both;box-sizing:border-box;
@@ -79,3 +79,10 @@
 #cart-widget .zb-widget-extra{display:grid!important;grid-template-columns:58px minmax(0,1fr)!important;gap:10px;align-items:start}
 #cart-widget .zb-widget-extra-image{display:block;width:58px;height:58px;object-fit:contain;border-radius:6px}
 #cart-widget .cart-widget-product.zb-hidden-original{display:none!important}
+
+/* V6.5: remove the whole bundle from the hover-cart without touching separate items. */
+#cart-widget .zb-widget-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:8px}
+#cart-widget .zb-widget-actions .zb-widget-edit{margin:0}
+#cart-widget .zb-widget-remove{display:inline-block;appearance:none;border:0;background:none;padding:3px 0;color:#a33;cursor:pointer;font:inherit;font-size:11px;line-height:1.4;text-decoration:underline;text-align:right}
+#cart-widget .zb-widget-remove:hover{color:#7e1717}
+#cart-widget .zb-widget-remove:disabled{opacity:.5;cursor:wait}
