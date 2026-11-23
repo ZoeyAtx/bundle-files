@@ -1,4 +1,4 @@
-/* Universal Shoptet bundle engine v6.2 — configure products and boxes in HTML only. */
+/* Universal Shoptet bundle engine v6.3 — configure products and boxes in HTML only. */
 (() => {
   'use strict';
   if (window.__zbBundleV6) return;
@@ -15,7 +15,7 @@
   const BEGIN = '--- DÁRKOVÉ BALÍČKY ---';
   const END = '--- KONEC DÁRKOVÝCH BALÍČKŮ ---';
   const DEBUG = false; // Set true for storefront diagnostics.
-  const log = (...args) => { if (DEBUG) console.log('[ZB v6.2]', ...args); };
+  const log = (...args) => { if (DEBUG) console.log('[ZB v6.3]', ...args); };
   const dl = k => { try { return typeof getShoptetDataLayer === 'function' ? getShoptetDataLayer(k) : null; } catch { return null; } };
   const api = () => window.shoptet?.cartShared;
   const getRecords = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(r => r && r.id && Array.isArray(r.items) && r.box?.code) : []; } catch { return []; } };
@@ -36,6 +36,13 @@
     catch { return false; }
   };
   const stripAccents = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const imageUrl = raw => {
+    if (!raw) return '';
+    try {
+      const url = new URL(raw, location.href);
+      return /^https?:$/.test(url.protocol) ? url.href : '';
+    } catch { return ''; }
+  };
   const priceFromText = s => {
     const text = String(s || '').replace(/\u00a0/g, ' ').trim();
     // Read one price only: a cart cell can contain both an old and a new price.
@@ -215,10 +222,16 @@
     return Number.isFinite(line?.unitPrice) ? line.unitPrice : fallback;
   }
   const listHtml = r => partList(r).map(p => `<li>${p.q}× ${esc(p.name)}</li>`).join('');
+  const bundleImage = (r, className = 'zb-bundle-image') => {
+    const src = imageUrl(r.image);
+    return src ? `<img class="${className}" src="${esc(src)}" alt="${esc(r.type)}" loading="lazy">` :
+      `<span class="${className} zb-bundle-image-empty" aria-hidden="true">Balíček</span>`;
+  };
+  const bundleDetails = r => `<details class="zb-bundle-details"><summary>Obsah balíčku (${sumBy(partList(r), p => p.q)} položek)</summary><ul>${listHtml(r)}</ul></details>`;
   function makeMainRow(r, total) {
     const tr = D.createElement('tr');
     tr.className = 'zb-virtual zb-cart-bundle';
-    tr.innerHTML = `<td class="cart-p-image"></td><td class="p-name"><strong>Balíček: ${esc(r.type)}</strong><ul>${listHtml(r)}</ul></td><td class="p-availability">Balíček</td><td class="p-quantity">1 balíček</td><td class="p-price"></td><td class="p-total"><strong>${money(total,r.currency,r.locale)}</strong><button type="button" class="zb-remove" data-zb-remove="${esc(r.id)}">Odebrat balíček</button></td>`;
+    tr.innerHTML = `<td class="cart-p-image">${bundleImage(r)}</td><td class="p-name"><strong>Balíček: ${esc(r.type)}</strong>${bundleDetails(r)}</td><td class="p-availability">Balíček</td><td class="p-quantity">1 balíček</td><td class="p-price"></td><td class="p-total"><strong>${money(total,r.currency,r.locale)}</strong><button type="button" class="zb-remove" data-zb-remove="${esc(r.id)}">Odebrat balíček</button></td>`;
     return tr;
   }
   function makeMainExtra(c, name, amount, unit, currency, locale) {
@@ -228,16 +241,18 @@
     return tr;
   }
   function makeRecapRow(r, total) {
+    // Deliberately do NOT use Shoptet's .cart-item class here: the theme gives it
+    // multiple narrow grid columns, which previously crushed the bundle description.
     const div = D.createElement('div');
-    div.className = 'cart-item zb-virtual zb-recap-bundle';
+    div.className = 'zb-virtual zb-recap-bundle';
     const canRemove = groupedParts(r).every(p => cartLines().some(line => line.code === p.code && !!readIdsFromDom(p.code, line).itemId));
-    div.innerHTML = `<div class="cart-item-name"><strong>Balíček: ${esc(r.type)}</strong><ul>${listHtml(r)}</ul></div><div class="cart-item-amount">1×</div><div class="cart-item-price">${money(total,r.currency,r.locale)}</div>${canRemove ? `<button type="button" class="zb-remove" data-zb-remove="${esc(r.id)}">Odebrat</button>` : '<a class="zb-edit-link" href="/kosik/">Upravit v košíku</a>'}`;
+    div.innerHTML = `<div class="zb-recap-head">${bundleImage(r)}<div class="zb-recap-meta"><strong class="zb-recap-title">${esc(r.type)}</strong><span class="zb-recap-sub">Dárkový balíček · 1×</span><strong class="zb-recap-price">${money(total,r.currency,r.locale)}</strong></div></div>${bundleDetails(r)}<div class="zb-recap-actions">${canRemove ? `<button type="button" class="zb-remove" data-zb-remove="${esc(r.id)}">Odebrat balíček</button>` : '<a class="zb-edit-link" href="/kosik/">Upravit v košíku</a>'}</div>`;
     return div;
   }
   function makeRecapExtra(name, amount, total, currency, locale) {
     const div = D.createElement('div');
-    div.className = 'cart-item zb-virtual zb-recap-extra';
-    div.innerHTML = `<div class="cart-item-name">${esc(name)} <small>(samostatně)</small></div><div class="cart-item-amount">${amount}×</div><div class="cart-item-price">${money(total,currency,locale)}</div>`;
+    div.className = 'zb-virtual zb-recap-extra';
+    div.innerHTML = `<div class="zb-recap-extra-name">${esc(name)} <small>(samostatně)</small></div><span class="zb-recap-extra-count">${amount}×</span><strong class="zb-recap-extra-price">${money(total,currency,locale)}</strong>`;
     return div;
   }
   function renderGroupContainer(rows, records, isMain) {
@@ -432,6 +447,11 @@
     if (!products.length) return;
     let current = types[0].id, busy = false;
     const locale = m.dataset.locale || 'cs-CZ', currency = m.dataset.currency || 'CZK';
+    // Optional data-image on .bundle_menu overrides the product's own social/gallery image.
+    const configuratorImage = imageUrl(m.dataset.image ||
+      $('meta[property="og:image"]')?.getAttribute('content') ||
+      $('meta[name="twitter:image"]')?.getAttribute('content') ||
+      $('.p-detail .p-image img, .p-detail-inner .p-image img, .p-image img')?.getAttribute('src'));
     const activeType = () => types.find(t => t.id === current);
     const visible = (p, t = current) => !p.types.length || p.types.includes(t);
     const typeBoxes = (t = current) => boxes.filter(b => !b.types.length || b.types.includes(t));
@@ -583,7 +603,7 @@
         const record={
           id:`${Date.now()}-${Math.random().toString(36).slice(2,10)}`,
           t:Date.now(), type:activeType().name, typeId:current,
-          currency,locale,size:size(),
+          currency,locale,size:size(),image:configuratorImage,
           box:{code:box.code,name:box.name,capacity:box.capacity,price:box.price},
           items:selected.map(p=>({code:p.code,name:p.name,q:p.q,price:p.price}))
         };
