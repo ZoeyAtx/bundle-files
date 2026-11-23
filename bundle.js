@@ -1,4 +1,4 @@
-/* Universal Shoptet bundle engine v6.0 — configure products and boxes in HTML only. */
+/* Universal Shoptet bundle engine v6.2 — configure products and boxes in HTML only. */
 (() => {
   'use strict';
   if (window.__zbBundleV6) return;
@@ -14,8 +14,8 @@
   const OWN_KEY = 'zbBundlesV6OwnNote';
   const BEGIN = '--- DÁRKOVÉ BALÍČKY ---';
   const END = '--- KONEC DÁRKOVÝCH BALÍČKŮ ---';
-  const DEBUG = false;
-  const log = (...args) => { if (DEBUG) console.log('[ZB v6]', ...args); };
+  const DEBUG = false; // Set true for storefront diagnostics.
+  const log = (...args) => { if (DEBUG) console.log('[ZB v6.2]', ...args); };
   const dl = k => { try { return typeof getShoptetDataLayer === 'function' ? getShoptetDataLayer(k) : null; } catch { return null; } };
   const api = () => window.shoptet?.cartShared;
   const getRecords = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(r => r && r.id && Array.isArray(r.items) && r.box?.code) : []; } catch { return []; } };
@@ -199,31 +199,6 @@
     D.addEventListener('change', e => { if (e.target?.matches?.('#add-note')) queueMicrotask(syncNote); }, true);
   }
 
-  // Read global list of hidden product SKUs/URLs. Never hide direct product pages.
-  function hideBoxCards() {
-    const entries = $$('.zb-global-box[data-code], .bundle-box[data-code]');
-    const codes = new Set(entries.map(x => x.dataset.code).filter(x => x && !/TODO|PLACEHOLDER/i.test(x)));
-    const paths = new Set(entries.map(x => x.dataset.url).filter(configuredUrl).map(x => new URL(x, location.href).pathname.replace(/\/$/, '')));
-    if (!codes.size && !paths.size) return;
-    const selectors = [
-      '.products .product', '.products .p', '.products-block .product', '.products-block .p',
-      '.product-list .product', '.product-list .product-item', '.product-card',
-      '.products .product-item', '.products-block .product-item'
-    ];
-    for (const card of $$(selectors.join(','))) {
-      if (card.closest('#zb, .cart-table, .cart-items, .order-summary-top')) continue;
-      const codeCandidates = [card.dataset.microSku, card.dataset.code, card.dataset.productCode,
-        $('[data-micro-sku]', card)?.dataset.microSku, $('[itemprop="sku"]', card)?.content,
-        $('[itemprop="sku"]', card)?.textContent].filter(Boolean).map(x => x.trim());
-      const codeMatch = codeCandidates.some(x => codes.has(x));
-      const urlMatch = $$('a[href]', card).some(a => {
-        try { const u = new URL(a.href, location.href); return u.origin === location.origin && paths.has(u.pathname.replace(/\/$/, '')); }
-        catch { return false; }
-      });
-      if (codeMatch || urlMatch) card.classList.add('zb-hidden-box-card');
-    }
-  }
-
   // Cart/checkout presentation: underlying Shoptet rows and totals remain untouched.
   function actualPrice(c, domRow, line, fallback) {
     const raw = domRow && (
@@ -322,7 +297,7 @@
   function scheduleRender() {
     if (renderPending) return;
     renderPending = true;
-    setTimeout(() => { renderPending = false; hideBoxCards(); renderGroups(); syncNote(); }, 120);
+    setTimeout(() => { renderPending = false; renderGroups(); syncNote(); }, 120);
   }
   let removing = false;
   async function removeBundle(id) {
@@ -438,8 +413,10 @@
       disabledText:e.dataset.disabledText || 'Tento balíček je momentálně nedostupný.',
       min:e.dataset.min == null ? null : num(e.dataset.min), max:e.dataset.max == null ? null : num(e.dataset.max)
     })) : [{id:'all',name:m.dataset.bundleName || 'Balíček',enabled:true,min:null,max:null}];
+    // Every bundle config provides its own physical box SKU and product URL.
     const boxes = $$('.bundle-box').map(e => ({
-      code:(e.dataset.code || '').trim(), url:e.dataset.url || '',
+      code:(e.dataset.code || '').trim(),
+      url:e.dataset.url || '',
       name:e.dataset.name || 'Krabice', capacity:num(e.dataset.capacity),
       types:split(e.dataset.types), price:e.dataset.price == null ? null : num(e.dataset.price),
       priority:num(e.dataset.priority), out:true, error:'', stockExact:null
@@ -532,9 +509,9 @@
     m.hidden=source.hidden=true;
     D.body.classList.add('zb-on');
     const view=D.createElement('section'); view.id='zb';
-    view.innerHTML=`<header><b>${esc(m.dataset.title || 'Vyberte produkty do balíčku')}</b><small class="zd"></small></header>${types.length>1?`<nav class="zy">${types.map(t=>`<button type="button" data-type="${esc(t.id)}">${esc(t.name)}</button>`).join('')}</nav>`:''}<main><div class="zp">Načítám dostupnost…</div><aside><b>Váš balíček</b><div class="zbinfo"></div><i><u></u></i><small class="zc"></small><div class="zr"></div><div class="zs"></div><strong class="zt">—</strong><button type="button" class="zb-add" disabled>${esc(m.dataset.buttonText || 'Přidat do košíku')}</button><em class="zb-message" aria-live="polite"></em></aside></main>`;
+    view.innerHTML=`<header><b>${esc(m.dataset.title || 'Vyberte produkty do balíčku')}</b><small class="zd"></small></header>${types.length>1?`<nav class="zy">${types.map(t=>`<button type="button" data-type="${esc(t.id)}">${esc(t.name)}</button>`).join('')}</nav>`:''}<main><div class="zb-products">Načítám dostupnost…</div><aside><b>Váš balíček</b><div class="zbinfo"></div><i><u></u></i><small class="zc"></small><div class="zr"></div><div class="zs"></div><strong class="zt">—</strong><button type="button" class="zb-add" disabled>${esc(m.dataset.buttonText || 'Přidat do košíku')}</button><em class="zb-message" aria-live="polite"></em></aside></main>`;
     ($('.p-info-wrapper') || m.parentElement).append(view);
-    const grid=$('.zp',view), message=$('.zb-message',view), addButton=$('.zb-add',view);
+    const grid=$('.zb-products',view), message=$('.zb-message',view), addButton=$('.zb-add',view);
     await pool([...boxes,...products],5,loadProduct);
     chooseAvailableType();
     if (typeFeasible(current)) selectBase();
@@ -546,7 +523,7 @@
       $('.zd',view).textContent=!any ? 'Momentálně nedostupné. Zkontrolujte nastavení a sklad krabic i produktů.' :
         (m.dataset.description || (min===max ? `Vyberte přesně ${max} produktů.` : `Vyberte ${min}–${max} produktů.`));
       $$('.zy button',view).forEach(b=>{b.disabled=!typeFeasible(b.dataset.type);b.classList.toggle('on',b.dataset.type===current);});
-      $$('.zp article',view).forEach(card=>{
+      $$('.zb-products article',view).forEach(card=>{
         const p=products.find(x=>x.index===num(card.dataset.index));
         card.hidden=!visible(p);
         card.classList.toggle('on',p.q>0);
