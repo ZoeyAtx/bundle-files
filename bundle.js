@@ -1,12 +1,12 @@
-/* Universal Shoptet bundle engine v6.10 — configure products and boxes in HTML only. */
+/* Universal Shoptet bundle engine v6.11 — configure products and boxes in HTML only. */
 (() => {
   'use strict';
   if (window.__zbBundleV6) {
-    if (window.__zbBundleVersion !== '6.10') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
+    if (window.__zbBundleVersion !== '6.11') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
     return;
   }
   window.__zbBundleV6 = true;
-  window.__zbBundleVersion = '6.10';
+  window.__zbBundleVersion = '6.11';
 
   const D = document;
   const $ = (s, root = D) => root.querySelector(s);
@@ -19,7 +19,7 @@
   const BEGIN = '--- DÁRKOVÉ BALÍČKY ---';
   const END = '--- KONEC DÁRKOVÝCH BALÍČKŮ ---';
   const DEBUG = false; // Set true for storefront diagnostics.
-  const log = (...args) => { if (DEBUG) console.log('[ZB v6.10]', ...args); };
+  const log = (...args) => { if (DEBUG) console.log('[ZB v6.11]', ...args); };
   const dl = k => { try { return typeof getShoptetDataLayer === 'function' ? getShoptetDataLayer(k) : null; } catch { return null; } };
   const api = () => window.shoptet?.cartShared;
   const getRecords = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(r => r && r.id && Array.isArray(r.items) && r.box?.code) : []; } catch { return []; } };
@@ -391,6 +391,23 @@
   // The mobile theme can hide +/-; the input must remain editable on all devices.
   const VIRTUAL_ROWS = '.zb-cart-bundle,.zb-cart-extra,.zb-widget-bundle,.zb-widget-extra,.zb-recap-bundle,.zb-recap-extra';
   const QUANTITY_INPUT = 'input[data-zb-quantity]';
+  const NATIVE_AMOUNT = 'input.amount, input[name="amount"]';
+  const rowQuantity = new WeakMap();
+  // A responsive template may contain several independent copies of the
+  // quantity field. Never leave a native amount input in a virtual row.
+  function isolateRowQuantities(row, opts) {
+    rowQuantity.set(row, opts);
+    for (const input of $$(NATIVE_AMOUNT,row)) {
+      if (input.type === 'hidden') {input.remove();continue;}
+      configureQuantityInput(input,opts);
+    }
+  }
+  function protectResponsiveQuantities() {
+    for (const row of $$(VIRTUAL_ROWS)) {
+      const opts=rowQuantity.get(row);
+      if (opts) isolateRowQuantities(row,opts);
+    }
+  }
   function configureQuantityInput(input, opts) {
     if (!input) return;
     for (const attr of [...input.attributes]) {
@@ -400,6 +417,21 @@
     input.classList.remove('amount');input.classList.add('zb-amount');
     const wrapper=input.closest('.quantity');
     if(wrapper){wrapper.classList.remove('quantity');wrapper.classList.add('zb-quantity');}
+    // Responsive copies can live outside the desktop .p-quantity cell.
+    // Give bare labels the same isolated wrapper and reliable +/- controls.
+    if (!input.closest('.zb-quantity')) {
+      const label=input.closest('label')||input;
+      const span=D.createElement('span');span.className='zb-quantity';
+      label.before(span);span.append(label);
+      for (const change of [-1,1]) {
+        const btn=D.createElement('button');btn.type='button';btn.className=change>0?'increase':'decrease';
+        const sign=D.createElement('span');sign.className=change>0?'increase__sign':'decrease__sign';sign.textContent=change>0?'+':'−';btn.append(sign);
+        if(opts.bundle)btn.setAttribute(change>0?'data-zb-duplicate':'data-zb-remove',opts.id);
+        else {btn.dataset.zbExtra=opts.code;btn.dataset.change=String(change);}
+        btn.setAttribute('aria-label',change>0?'Zvýšit množství':'Snížit množství');
+        if(change<0)span.prepend(btn);else span.append(btn);
+      }
+    }
     input.type='number';input.inputMode='numeric';input.min='0';input.step='1';
     input.autocomplete='off';
     input.readOnly=false;input.disabled=false;
@@ -439,6 +471,7 @@
         btn.setAttribute('aria-label',change>0?'Zvýšit množství':'Snížit množství');
       }
     }
+    isolateRowQuantities(tr,opts);
     for(const cell of $$('.p-price',tr)) setNativePrice(cell,opts.unit,opts,true);
     for(const cell of $$('.p-total',tr)) setNativePrice(cell,opts.total,opts);
     updateResponsivePrices(tr,opts);
@@ -588,7 +621,7 @@
       `<button class="increase" type="button" ${plus} aria-label="${opts.bundle?'Přidat další stejný balíček':'Zvýšit množství o 1'}"><span class="increase__sign">+</span></button>`+
       `<button class="decrease" type="button" ${minus} aria-label="${opts.bundle?'Odebrat tento balíček':'Snížit množství o 1'}"><span class="decrease__sign">−</span></button>`+
       `</span></div></div>`;
-    configureQuantityInput($('input.amount',name),opts);
+    isolateRowQuantities(div,opts);
     let remove=$('.cart-widget-product-delete',div);
     if(!remove){remove=D.createElement('div');remove.className='cart-widget-product-delete';div.append(remove);}
     const deleteAttr=opts.bundle ? `data-zb-remove="${esc(opts.id)}"` : `data-zb-extra-remove="${esc(opts.code)}"`;
@@ -773,6 +806,7 @@
     });
   }
   window.__zbCartDiagnostics=()=>({version:window.__zbBundleVersion,viewport:innerWidth,
+    nativeQuantityFields:$$(NATIVE_AMOUNT).filter(el=>!!el.getClientRects().length).map(el=>({html:el.outerHTML,virtual:!!el.closest(VIRTUAL_ROWS),rowClasses:el.closest('tr,.cart-widget-product,.cart-item')?.className||'',sku:el.closest('[data-micro-sku]')?.dataset.microSku||null})),
     rows:$$('.zb-cart-bundle,.zb-widget-bundle,.zb-recap-bundle').map(row=>({classes:row.className,
       fields:$$('input',row).map(el=>({classes:el.className,value:el.value,name:el.name,visible:!!el.getClientRects().length})),
       prices:$$('.p-price,.p-total,.cart-item-price,.price-final,.price,.mobile-price,.price-mobile,[data-zb-rendered-price]',row).map(el=>({classes:el.className,text:el.textContent.trim(),visible:!!el.getClientRects().length})),
@@ -783,8 +817,16 @@
     // number steppers, focus or native updates for ordinary products.
     for (const type of ['beforeinput','input','change','focus','focusin','blur','focusout','keydown','keypress','keyup','click']) {
       window.addEventListener(type,e=>{
-        const input=e.target?.closest?.(QUANTITY_INPUT);
-        if (!input) return;
+        let input=e.target?.closest?.(QUANTITY_INPUT);
+        if (!input) {
+          const candidate=e.target?.closest?.(NATIVE_AMOUNT);
+          const row=candidate?.closest(VIRTUAL_ROWS);
+          const opts=row&&rowQuantity.get(row);
+          if (!opts) return;
+          const typed=candidate.value;
+          configureQuantityInput(candidate,opts);input=candidate;
+          if (['input','change','blur','focusout','keydown','keyup'].includes(type)) input.value=typed;
+        }
         e.stopImmediatePropagation();
         if (type==='change' || type==='blur' || type==='focusout') commitQuantity(input);
         if (type==='keydown' && e.key==='Enter' && !e.isComposing) {
@@ -833,7 +875,7 @@
     D.addEventListener('ShoptetDataLayerUpdated', scheduleRender);
     D.addEventListener('ShoptetDOMContentChanged', scheduleRender);
     D.addEventListener('pointerover', e => { if(e.target?.closest?.('#cart-widget')) scheduleRender(); }, true);
-    new MutationObserver(scheduleRender).observe(D.body, {childList:true,subtree:true});
+    new MutationObserver(()=>{protectResponsiveQuantities();scheduleRender();}).observe(D.body, {childList:true,subtree:true});
     scheduleRender();
   }
 
