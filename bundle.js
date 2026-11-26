@@ -1,12 +1,12 @@
-/* Universal Shoptet bundle engine v6.9 — configure products and boxes in HTML only. */
+/* Universal Shoptet bundle engine v6.10 — configure products and boxes in HTML only. */
 (() => {
   'use strict';
   if (window.__zbBundleV6) {
-    if (window.__zbBundleVersion !== '6.9') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
+    if (window.__zbBundleVersion !== '6.10') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
     return;
   }
   window.__zbBundleV6 = true;
-  window.__zbBundleVersion = '6.9';
+  window.__zbBundleVersion = '6.10';
 
   const D = document;
   const $ = (s, root = D) => root.querySelector(s);
@@ -19,7 +19,7 @@
   const BEGIN = '--- DÁRKOVÉ BALÍČKY ---';
   const END = '--- KONEC DÁRKOVÝCH BALÍČKŮ ---';
   const DEBUG = false; // Set true for storefront diagnostics.
-  const log = (...args) => { if (DEBUG) console.log('[ZB v6.9]', ...args); };
+  const log = (...args) => { if (DEBUG) console.log('[ZB v6.10]', ...args); };
   const dl = k => { try { return typeof getShoptetDataLayer === 'function' ? getShoptetDataLayer(k) : null; } catch { return null; } };
   const api = () => window.shoptet?.cartShared;
   const getRecords = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(r => r && r.id && Array.isArray(r.items) && r.box?.code) : []; } catch { return []; } };
@@ -48,7 +48,7 @@
     } catch { return ''; }
   };
   const priceFromText = s => {
-    const text = String(s || '').replace(/\u00a0/g, ' ').trim();
+    const text = String(s || '').replace(/[\u00a0\u202f]/g, ' ').trim();
     // Read one price only: a cart cell can contain both an old and a new price.
     const match = text.match(/-?\d[\d .,]*/);
     if (!match) return null;
@@ -80,9 +80,14 @@
     if (Array.isArray(data)) return data.map(x => ({
       code:code(x), q:qty(x), itemId:x.itemId ?? x.item_id ?? null,
       priceId:x.priceId ?? x.price_id ?? null,
-      unitPrice:Number.isFinite(Number(x.priceWithVat)) ? Number(x.priceWithVat) : null
+      unitPrice:x.priceWithVat != null && x.priceWithVat !== "" && Number.isFinite(Number(x.priceWithVat)) ? Number(x.priceWithVat) : null
     })).filter(x => x.code);
-    return $$('.removeable[data-micro-sku], #cart-widget .cart-widget-product[data-micro-sku]').map(row => ({
+    const main=$$('.removeable[data-micro-sku]');
+    const widget=$$('#cart-widget .cart-widget-product[data-micro-sku]');
+    const candidates=main.length?main:widget;
+    const parents=[...new Set(candidates.map(row=>row.parentElement))];
+    const parent=parents.find(el=>el.getClientRects().length)||parents[0];
+    return candidates.filter(row=>row.parentElement===parent).map(row => ({
       code:row.dataset.microSku, q:num($('input.amount[name="amount"]', row)?.value, 0),
       itemId:$('input[name="itemId"]', row)?.value || null,
       priceId:$('input[name="priceId"]', row)?.value || null,
@@ -220,16 +225,15 @@
 
   // Cart/checkout presentation: underlying Shoptet rows and totals remain untouched.
   function actualPrice(c, domRow, line, fallback) {
-    const raw = domRow && (
-      $('.p-price .price-final, .p-price .price', domRow)?.textContent ||
-      $('.p-price', domRow)?.textContent ||
-      $('.p-total', domRow)?.textContent ||
-      $('.cart-item-price', domRow)?.textContent
-    );
-    const fromDom = priceFromText(raw);
-    if (fromDom !== null) {
-      const isTotal = !$('.p-price', domRow) && !!($('.p-total', domRow) || $('.cart-item-price', domRow));
-      return isTotal && line?.q ? fromDom / line.q : fromDom;
+    if (domRow) {
+      const totalRoot=$('.p-total, .cart-item-price',domRow);
+      const totalNode=totalRoot && ($('[data-testid="cartPrice"], .price-final, .price',totalRoot)||totalRoot);
+      const total=priceFromText(totalNode?.textContent);
+      if(total!==null && line?.q>0) return total/line.q;
+      const unitRoot=$('.p-price',domRow);
+      const unitNode=unitRoot && ($('[data-testid="cartItemPrice"], .price-final, .price',unitRoot)||unitRoot);
+      const unit=priceFromText(unitNode?.textContent);
+      if(unit!==null) return unit;
     }
     return Number.isFinite(line?.unitPrice) ? line.unitPrice : fallback;
   }
@@ -269,16 +273,25 @@
     row.classList.remove('zb-hidden-original');
     row.classList.add(cls);
     for (const el of [row,...$$('*',row)]) {
+      const test=el.getAttribute('data-testid')||'';
+      if (/^(cartItemPrice|cartPrice|cartWidgetProductPrice)$/i.test(test)) el.dataset.zbPriceKind=/^cartItemPrice$/i.test(test)?'unit':'total';
       for (const attr of [...el.attributes]) {
+        if (/^data-(?:price|unit-price|total-price|final-price|mobile-price|price-with-vat)$/.test(attr.name) && /\d/.test(attr.value)) {
+          el.dataset.zbPriceAttrs=(el.dataset.zbPriceAttrs||'')+' '+attr.name;
+          continue;
+        }
         if (attr.name === 'id' || attr.name === 'data-testid' || attr.name.startsWith('data-micro') ||
             attr.name.startsWith('on') || /^(?:data-(?:item|price|product|cart-item|sku)(?:-|$)|form|for$)/i.test(attr.name)) el.removeAttribute(attr.name);
       }
     }
-    // Retain the native form tag/classes for CSS, but remove all submission
-    // destinations and IDs. The capture listeners below block virtual submits.
+    // A virtual row is never a Shoptet form, even on mobile where the
+    // platform can bind directly to quantity inputs before our script loads.
     for (const form of $$('form',row)) {
-      form.removeAttribute('action');form.removeAttribute('method');form.removeAttribute('target');
-      form.removeAttribute('name');form.classList.remove('js-quantity-form','js-remove-form','csrf-enabled');
+      const div=D.createElement('div');
+      div.className=form.className;
+      div.classList.remove('js-quantity-form','js-remove-form','csrf-enabled','quantity-form');
+      if(form.classList.contains('quantity-form')) div.classList.add('zb-quantity-form');
+      div.append(...form.childNodes);form.replaceWith(div);
     }
     $$('input[type="hidden"]',row).forEach(el=>el.remove());
     return row;
@@ -317,14 +330,62 @@
     }
     return false;
   }
+  // Every responsive copy must show the same calculated amount. Keep the
+  // price wrappers/classes, but never keep the cloned product's price text.
+  const PRICE_NODES='[data-zb-price-kind], .price-final, .price, .cart-item-price, .mobile-price, .price-mobile, .p-price-mobile, .p-total-mobile';
+  const OLD_PRICES='.price-standard, .price-old, .price-save, del, s';
   function setNativePrice(root, value, opts, unit=false) {
     if (!root) return;
-    const target=$('.price-final, .price, strong',root)||root;
-    // No copied discount/old price from the template product.
-    $$('.price-standard, .price-old, .price-save, del, s',root).forEach(el=>el.remove());
-    const formatted=Number.isFinite(value)?new Intl.NumberFormat(opts.locale||'cs-CZ',{maximumFractionDigits:2}).format(value):'—';
-    if (!replaceNumber(target,formatted)) target.textContent=widgetMoney(value,opts.currency,opts.locale)+(unit?' / ks':'');
-    else if (unit && !/\/\s*ks/i.test(root.textContent) && !$('.price-unit, .unit',root)) target.append(' / ks');
+    $$(OLD_PRICES,root).forEach(el=>el.remove());
+    const formatted=widgetMoney(value,opts.currency,opts.locale);
+    const candidates=$$(PRICE_NODES,root).filter(el=>!el.closest('button, .remove-item, .sr-only'));
+    const targets=candidates.filter(el=>!candidates.some(other=>other!==el && el.contains(other)));
+    if(!targets.length) {
+      const strong=$$('strong',root).filter(el=>!el.closest('button, .remove-item, .sr-only'));
+      targets.push(...(strong.length?strong:[root]));
+    }
+    for(const target of targets) {
+      const hasUnit=/\/\s*ks/i.test(target.textContent);
+      // Price nodes normally contain only a number and currency. Keep any
+      // separate unit span, and don't touch a delete control in the same cell.
+      if(!target.querySelector('button, .remove-item, .unit-value, .price-unit, .unit')) {
+        target.textContent=formatted+(unit&&hasUnit?' / ks':'');
+      } else if(!replaceNumber(target,new Intl.NumberFormat(opts.locale||'cs-CZ',{maximumFractionDigits:2}).format(value))) {
+        target.prepend(formatted);
+      }
+      target.dataset.zbRenderedPrice='1';
+    }
+    if(unit && !/\/\s*ks/i.test(root.textContent) && !$('.price-unit, .unit-value, .unit',root)) targets[0].append(' / ks');
+  }
+  function updateResponsivePrices(row,opts) {
+    // Additional price nodes in the product-name/quantity area are common
+    // in responsive themes. They are not necessarily inside .p-price/.p-total.
+    for(const el of $$(PRICE_NODES,row)) {
+      if(el.closest('.p-price,.p-total,.cart-item-price,[data-zb-rendered-price],a,button,.p-availability') || el.querySelector(PRICE_NODES)) continue;
+      const unit=el.dataset.zbPriceKind==='unit'||/\/\s*ks/i.test(el.textContent);
+      setNativePrice(el,unit?opts.unit:opts.total,opts,unit);
+    }
+    // Keep any price-bearing data attributes used by responsive CSS in sync.
+    for(const el of [row,...$$('[data-zb-price-attrs]',row)]) {
+      for(const attr of split((el.dataset.zbPriceAttrs||'').trim().replace(/\s+/g,','))) {
+        const unit=attr==='data-unit-price'||el.dataset.zbPriceKind==='unit'||!!el.closest('.p-price');
+        const value=unit?opts.unit:opts.total;
+        const old=el.getAttribute(attr)||'';
+        el.setAttribute(attr,/(?:Kč|CZK|EUR|€)/i.test(old)?widgetMoney(value,opts.currency,opts.locale):String(value));
+      }
+    }
+    // Some templates render a separate mobile price without a price class.
+    // Replace currency-bearing text outside names/controls as well.
+    const walker=D.createTreeWalker(row,NodeFilter.SHOW_TEXT);
+    let n;
+    while((n=walker.nextNode())) {
+      const el=n.parentElement;
+      if(!el || el.closest('[data-zb-rendered-price],a,button,.p-availability,.cart-p-image,.sr-only,form,.zb-quantity-form')) continue;
+      if(/\d[\d\s.,]*(?:Kč|CZK|EUR|€)/i.test(n.nodeValue)) {
+        const unit=!!el.closest('.p-price')||/\/\s*ks/i.test(n.nodeValue);
+        n.nodeValue=n.nodeValue.replace(/-?\d[\d\s.,]*(?:Kč|CZK|EUR|€)/gi,widgetMoney(unit?opts.unit:opts.total,opts.currency,opts.locale));
+      }
+    }
   }
   // Keep the native visual classes, but make the virtual quantity field ours.
   // The mobile theme can hide +/-; the input must remain editable on all devices.
@@ -336,7 +397,11 @@
       if (attr.name.startsWith('data-') || attr.name.startsWith('on') ||
           ['name','form','disabled','readonly','max','pattern','required'].includes(attr.name)) input.removeAttribute(attr.name);
     }
+    input.classList.remove('amount');input.classList.add('zb-amount');
+    const wrapper=input.closest('.quantity');
+    if(wrapper){wrapper.classList.remove('quantity');wrapper.classList.add('zb-quantity');}
     input.type='number';input.inputMode='numeric';input.min='0';input.step='1';
+    input.autocomplete='off';
     input.readOnly=false;input.disabled=false;
     input.defaultValue=String(opts.amount);input.value=String(opts.amount);
     input.dataset.zbQuantity=opts.bundle?'bundle':'extra';
@@ -363,7 +428,7 @@
     if (quantity) {
       let input=$('input.amount',quantity), minus=$('.decrease',quantity), plus=$('.increase',quantity);
       if (!input || !minus || !plus) {
-        quantity.innerHTML='<div class="quantity-form"><span class="quantity"><button type="button" class="decrease"><span class="decrease__sign">−</span></button><label><input type="number" class="amount" min="1"></label><button type="button" class="increase"><span class="increase__sign">+</span></button></span></div>';
+        quantity.innerHTML='<div class="zb-quantity-form"><span class="quantity"><button type="button" class="decrease"><span class="decrease__sign">−</span></button><label><input type="number" class="amount" min="1"></label><button type="button" class="increase"><span class="increase__sign">+</span></button></span></div>';
         input=$('input.amount',quantity);minus=$('.decrease',quantity);plus=$('.increase',quantity);
       }
       configureQuantityInput(input,opts);
@@ -374,8 +439,9 @@
         btn.setAttribute('aria-label',change>0?'Zvýšit množství':'Snížit množství');
       }
     }
-    setNativePrice($('.p-price',tr),opts.unit,opts,true);
-    setNativePrice($('.p-total',tr),opts.total,opts);
+    for(const cell of $$('.p-price',tr)) setNativePrice(cell,opts.unit,opts,true);
+    for(const cell of $$('.p-total',tr)) setNativePrice(cell,opts.total,opts);
+    updateResponsivePrices(tr,opts);
     let remove=$('.remove-item, .p-remove button, .p-delete button',tr);
     if (!remove) {
       remove=D.createElement('button');remove.className='remove-item';
@@ -400,6 +466,7 @@
     const amount=$('.cart-item-amount',row);
     if(amount && !replaceNumber(amount,String(opts.amount))) amount.textContent=`${opts.amount} ks`;
     setNativePrice($('.cart-item-price',row),opts.total,opts);
+    updateResponsivePrices(row,{...opts,unit:opts.amount?opts.total/opts.amount:opts.total});
     // Recap is read-only on this theme. Do not add a photo or controls that
     // ordinary products do not have. Never retain ingredient action links.
     $$('form, button, .remove-item, .cart-item-delete',row).forEach(el=>el.remove());
@@ -457,14 +524,13 @@
     const recaps = $$('.order-summary-top .cart-items .cart-item[data-micro-sku]');
     const signature = JSON.stringify({
       ids:records.map(r => [r.id,bundleLabel(r)]),
-      cart:cartLines().map(x => [x.code,x.q,x.itemId]),
-      main:main.map(x => x.dataset.microSku), recap:recaps.map(x => x.dataset.microSku)
+      cart:cartLines().map(x => [x.code,x.q,x.itemId,x.unitPrice]),
+      main:main.map(x => [x.dataset.microSku,$('.p-price',x)?.textContent,$('.p-total',x)?.textContent]), recap:recaps.map(x => [x.dataset.microSku,$('.cart-item-price',x)?.textContent])
     });
     const required = needs(records);
     const hasAllParts = rows => [...required.keys()].every(c => rows.some(row => row.dataset.microSku === c));
-    const mainReady = !hasAllParts(main) || (
-      main.filter(row => required.has(row.dataset.microSku)).every(row => row.classList.contains('zb-hidden-original')) &&
-      $$('.zb-cart-bundle').length === records.length);
+    const mainParents=[...new Set(main.map(row=>row.parentElement))];
+    const mainReady=mainParents.every(parent=>{const rows=main.filter(row=>row.parentElement===parent);return !hasAllParts(rows)||(rows.filter(row=>required.has(row.dataset.microSku)).every(row=>row.classList.contains('zb-hidden-original'))&&$$('.zb-cart-bundle',parent).length===records.length);});
     const recapParents = [...new Set(recaps.map(row => row.parentElement))];
     const recapReady = recapParents.every(parent => {
       const rows = recaps.filter(row => row.parentElement === parent);
@@ -477,7 +543,7 @@
     $$('.zb-cart-bundle, .zb-cart-extra, .zb-recap-bundle, .zb-recap-extra').forEach(el => el.remove());
     $$('.removeable.zb-hidden-original, .order-summary-top .cart-items .cart-item.zb-hidden-original').forEach(el => el.classList.remove('zb-hidden-original'));
     if (!records.length) return;
-    renderGroupContainer(main, records, true);
+    for(const parent of mainParents) renderGroupContainer(main.filter(row=>row.parentElement===parent),records,true);
     const parents = [...new Set(recaps.map(el => el.parentElement))];
     for (const parent of parents) renderGroupContainer(recaps.filter(el => el.parentElement === parent), records, false);
   }
@@ -503,8 +569,7 @@
   // Strip the native form actions, item IDs and microdata: a virtual row must
   // never submit an individual ingredient or be treated as a real cart item.
   function nativeWidgetRow(source, opts) {
-    const div=source.cloneNode(true);
-    div.classList.add(opts.bundle ? 'zb-widget-bundle' : 'zb-widget-extra');
+    const div=cleanClone(source,opts.bundle ? 'zb-widget-bundle' : 'zb-widget-extra');
     ['data-micro','data-micro-sku','data-micro-identifier','data-testid'].forEach(a=>div.removeAttribute(a));
     $$('[data-testid]',div).forEach(el=>el.removeAttribute('data-testid'));
     $$('form',div).forEach(form=>form.remove());
@@ -518,7 +583,7 @@
     const minus=opts.bundle ? `data-zb-remove="${esc(opts.id)}"` : `data-zb-extra="${esc(opts.code)}" data-change="-1"`;
     name.innerHTML=`<strong><a href="${esc(href)}">${esc(opts.name)}</a></strong>`+
       `<span>${widgetMoney(opts.total,opts.currency,opts.locale)}</span>`+
-      `<div class="cart-widget-product-amount"><div class="quantity-form"><span class="quantity">`+
+      `<div class="cart-widget-product-amount"><div class="zb-quantity-form"><span class="quantity">`+
       `<label><span class="sr-only">Množství</span><input type="number" class="amount" value="${opts.amount}" min="0" step="1" inputmode="numeric" aria-label="Množství"></label>`+
       `<button class="increase" type="button" ${plus} aria-label="${opts.bundle?'Přidat další stejný balíček':'Zvýšit množství o 1'}"><span class="increase__sign">+</span></button>`+
       `<button class="decrease" type="button" ${minus} aria-label="${opts.bundle?'Odebrat tento balíček':'Snížit množství o 1'}"><span class="decrease__sign">−</span></button>`+
@@ -528,6 +593,7 @@
     if(!remove){remove=D.createElement('div');remove.className='cart-widget-product-delete';div.append(remove);}
     const deleteAttr=opts.bundle ? `data-zb-remove="${esc(opts.id)}"` : `data-zb-extra-remove="${esc(opts.code)}"`;
     remove.innerHTML=`<div class="inline"><button type="button" class="remove-item" ${deleteAttr} aria-label="${opts.bundle?'Odebrat celý balíček':'Odebrat samostatný produkt'}"><span class="sr-only">Odstranit z košíku</span></button></div>`;
+    updateResponsivePrices(div,{...opts,unit:opts.amount?opts.total/opts.amount:opts.total});
     return div;
   }
   function makeWidgetRow(r, total, source) {
@@ -609,6 +675,8 @@
     setTimeout(() => {
       renderPending = false;
       if (removing) return; // Wait until every physical SKU has been updated.
+      const active=D.activeElement;
+      if(active?.matches?.(QUANTITY_INPUT) && active.value!==active.dataset.zbCurrent && !active.dataset.zbPending) return;
       renderGroups(); renderWidget(); syncNote();
     }, 120);
   }
@@ -687,9 +755,9 @@
     // clears the field while typing. Cap a single virtual-row expansion to
     // avoid accidentally generating thousands of local records.
     if (!raw || !Number.isSafeInteger(desired) || desired<0 || (isBundle && desired>1000) || removing) {
-      input.value=String(current);return;
+      input.value=String(current);scheduleRender();return;
     }
-    if (desired===current) return;
+    if (desired===current) {scheduleRender();return;}
     input.dataset.zbPending='1';
     input.setAttribute('aria-busy','true');
     input.readOnly=true;
@@ -704,12 +772,17 @@
       input.readOnly=false;delete input.dataset.zbPending;input.removeAttribute('aria-busy');
     });
   }
+  window.__zbCartDiagnostics=()=>({version:window.__zbBundleVersion,viewport:innerWidth,
+    rows:$$('.zb-cart-bundle,.zb-widget-bundle,.zb-recap-bundle').map(row=>({classes:row.className,
+      fields:$$('input',row).map(el=>({classes:el.className,value:el.value,name:el.name,visible:!!el.getClientRects().length})),
+      prices:$$('.p-price,.p-total,.cart-item-price,.price-final,.price,.mobile-price,.price-mobile,[data-zb-rendered-price]',row).map(el=>({classes:el.className,text:el.textContent.trim(),visible:!!el.getClientRects().length})),
+      forms:$$('form',row).length})),busy:removing});
   function initCartUI() {
     // Shoptet delegates quantity events on .amount / .quantity-form. Block
     // those events for virtual inputs only, without preventing normal typing,
     // number steppers, focus or native updates for ordinary products.
     for (const type of ['beforeinput','input','change','focus','focusin','blur','focusout','keydown','keypress','keyup','click']) {
-      D.addEventListener(type,e=>{
+      window.addEventListener(type,e=>{
         const input=e.target?.closest?.(QUANTITY_INPUT);
         if (!input) return;
         e.stopImmediatePropagation();
@@ -719,7 +792,7 @@
         }
       },true);
     }
-    D.addEventListener('submit', e=>{
+    window.addEventListener('submit', e=>{
       if (!e.target.closest?.(VIRTUAL_ROWS)) return;
       e.preventDefault();e.stopImmediatePropagation();
       commitQuantity($(QUANTITY_INPUT,e.target));
