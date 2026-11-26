@@ -1,12 +1,12 @@
-/* Universal Shoptet bundle engine v6.8 — configure products and boxes in HTML only. */
+/* Universal Shoptet bundle engine v6.9 — configure products and boxes in HTML only. */
 (() => {
   'use strict';
   if (window.__zbBundleV6) {
-    if (window.__zbBundleVersion !== '6.8') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
+    if (window.__zbBundleVersion !== '6.9') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
     return;
   }
   window.__zbBundleV6 = true;
-  window.__zbBundleVersion = '6.8';
+  window.__zbBundleVersion = '6.9';
 
   const D = document;
   const $ = (s, root = D) => root.querySelector(s);
@@ -19,7 +19,7 @@
   const BEGIN = '--- DÁRKOVÉ BALÍČKY ---';
   const END = '--- KONEC DÁRKOVÝCH BALÍČKŮ ---';
   const DEBUG = false; // Set true for storefront diagnostics.
-  const log = (...args) => { if (DEBUG) console.log('[ZB v6.8]', ...args); };
+  const log = (...args) => { if (DEBUG) console.log('[ZB v6.9]', ...args); };
   const dl = k => { try { return typeof getShoptetDataLayer === 'function' ? getShoptetDataLayer(k) : null; } catch { return null; } };
   const api = () => window.shoptet?.cartShared;
   const getRecords = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(r => r && r.id && Array.isArray(r.items) && r.box?.code) : []; } catch { return []; } };
@@ -180,6 +180,7 @@
     return records.map((r, i) => `Balíček ${i+1}: ${r.type}\nKrabice: ${r.box.name} [${r.box.code}] (${r.size}/${r.box.capacity})\n${r.items.map(x => `${x.q}× ${x.name} [${x.code}]`).join('\n')}`).join('\n\n');
   }
   function syncNote() {
+    if (removing) return; // Do not reconcile a partially updated bundle.
     const t = $('#remark');
     if (!t) return;
     const records = reconcileRecords();
@@ -212,7 +213,7 @@
     if (dl('pageType') === 'thankYou' || /\/dekujeme\/?(?:\?|$)/i.test(location.pathname)) { clearRecords(); return; }
     if (hasCartData() && cartLines().length === 0) clearRecords();
     syncNote();
-    D.addEventListener('submit', e => { if (e.target?.closest?.('#order-form, form')) syncNote(); }, true);
+    D.addEventListener('submit', e => { if (!e.target?.closest?.(VIRTUAL_ROWS) && e.target?.closest?.('#order-form, form')) syncNote(); }, true);
     D.addEventListener('focusout', e => { if (e.target?.matches?.('#remark')) syncNote(); }, true);
     D.addEventListener('change', e => { if (e.target?.matches?.('#add-note')) queueMicrotask(syncNote); }, true);
   }
@@ -325,6 +326,24 @@
     if (!replaceNumber(target,formatted)) target.textContent=widgetMoney(value,opts.currency,opts.locale)+(unit?' / ks':'');
     else if (unit && !/\/\s*ks/i.test(root.textContent) && !$('.price-unit, .unit',root)) target.append(' / ks');
   }
+  // Keep the native visual classes, but make the virtual quantity field ours.
+  // The mobile theme can hide +/-; the input must remain editable on all devices.
+  const VIRTUAL_ROWS = '.zb-cart-bundle,.zb-cart-extra,.zb-widget-bundle,.zb-widget-extra,.zb-recap-bundle,.zb-recap-extra';
+  const QUANTITY_INPUT = 'input[data-zb-quantity]';
+  function configureQuantityInput(input, opts) {
+    if (!input) return;
+    for (const attr of [...input.attributes]) {
+      if (attr.name.startsWith('data-') || attr.name.startsWith('on') ||
+          ['name','form','disabled','readonly','max','pattern','required'].includes(attr.name)) input.removeAttribute(attr.name);
+    }
+    input.type='number';input.inputMode='numeric';input.min='0';input.step='1';
+    input.readOnly=false;input.disabled=false;
+    input.defaultValue=String(opts.amount);input.value=String(opts.amount);
+    input.dataset.zbQuantity=opts.bundle?'bundle':'extra';
+    input.dataset.zbKey=opts.bundle?opts.id:opts.code;
+    input.dataset.zbCurrent=String(opts.amount);
+    input.setAttribute('aria-label','Množství');
+  }
   function nativeMainRow(source, opts) {
     const tr=cleanClone(source,opts.bundle?'zb-cart-bundle':'zb-cart-extra');
     tr.dataset.zbVirtual=opts.bundle?opts.id:opts.code;
@@ -347,8 +366,7 @@
         quantity.innerHTML='<div class="quantity-form"><span class="quantity"><button type="button" class="decrease"><span class="decrease__sign">−</span></button><label><input type="number" class="amount" min="1"></label><button type="button" class="increase"><span class="increase__sign">+</span></button></span></div>';
         input=$('input.amount',quantity);minus=$('.decrease',quantity);plus=$('.increase',quantity);
       }
-      input.value=String(opts.amount);input.setAttribute('value',String(opts.amount));input.readOnly=true;
-      input.removeAttribute('name');input.removeAttribute('max');input.removeAttribute('disabled');
+      configureQuantityInput(input,opts);
       for (const [btn,change] of [[minus,-1],[plus,1]]) {
         btn.setAttribute('type','button');btn.removeAttribute('disabled');btn.removeAttribute('name');btn.removeAttribute('href');
         if(opts.bundle)btn.setAttribute(change>0?'data-zb-duplicate':'data-zb-remove',opts.id);
@@ -501,10 +519,11 @@
     name.innerHTML=`<strong><a href="${esc(href)}">${esc(opts.name)}</a></strong>`+
       `<span>${widgetMoney(opts.total,opts.currency,opts.locale)}</span>`+
       `<div class="cart-widget-product-amount"><div class="quantity-form"><span class="quantity">`+
-      `<label><span class="sr-only">Množství</span><input type="number" class="amount" value="${opts.amount}" min="1" readonly aria-label="Množství: ${opts.amount}"></label>`+
+      `<label><span class="sr-only">Množství</span><input type="number" class="amount" value="${opts.amount}" min="0" step="1" inputmode="numeric" aria-label="Množství"></label>`+
       `<button class="increase" type="button" ${plus} aria-label="${opts.bundle?'Přidat další stejný balíček':'Zvýšit množství o 1'}"><span class="increase__sign">+</span></button>`+
       `<button class="decrease" type="button" ${minus} aria-label="${opts.bundle?'Odebrat tento balíček':'Snížit množství o 1'}"><span class="decrease__sign">−</span></button>`+
       `</span></div></div>`;
+    configureQuantityInput($('input.amount',name),opts);
     let remove=$('.cart-widget-product-delete',div);
     if(!remove){remove=D.createElement('div');remove.className='cart-widget-product-delete';div.append(remove);}
     const deleteAttr=opts.bundle ? `data-zb-remove="${esc(opts.id)}"` : `data-zb-extra-remove="${esc(opts.code)}"`;
@@ -585,32 +604,37 @@
     }
   }
   function scheduleRender() {
-    if (renderPending) return;
+    if (renderPending || removing) return;
     renderPending = true;
-    setTimeout(() => { renderPending = false; renderGroups(); renderWidget(); syncNote(); }, 120);
+    setTimeout(() => {
+      renderPending = false;
+      if (removing) return; // Wait until every physical SKU has been updated.
+      renderGroups(); renderWidget(); syncNote();
+    }, 120);
   }
   let removing = false;
-  async function duplicateBundle(id) {
-    if (removing) return;
+  async function duplicateBundle(id, copies=1) {
+    if (removing || !Number.isSafeInteger(copies) || copies<1 || copies>999) return false;
     const records=reconcileRecords();
     const target=records.find(r=>r.id===id);
-    if(!target) return;
+    if(!target) return false;
     const parts=groupedParts(target);
     const snapshot=new Map(parts.map(p=>[p.code,cartCount(p.code)]));
     removing=true;
     try {
-      for(const p of parts) await addCart(p.code,p.q);
-      const copy={...target,id:`${Date.now()}-${Math.random().toString(36).slice(2,10)}`,t:Date.now()};
-      saveRecords([...getRecords(),copy]);
-      syncNote();renderSignature='';scheduleRender();
+      // One request per physical SKU, not one request per copy.
+      for(const p of parts) await addCart(p.code,p.q*copies);
+      const added=Array.from({length:copies},()=>({...target,id:`${Date.now()}-${Math.random().toString(36).slice(2,10)}`,t:Date.now()}));
+      saveRecords([...getRecords(),...added]);
       if(!$('.removeable[data-micro-sku]')) location.reload();
+      return true;
     } catch(err) {
       const restored=await rollbackTo(snapshot);
       console.error('[ZB] Duplicate bundle failed:',err);
       alert(restored ? 'Další balíček se nepodařilo přidat. Košík byl vrácen do původního stavu.' :
         'Další balíček se nepodařilo přidat a vrácení změn nebylo úplné. Zkontrolujte košík.');
-      scheduleRender();
-    } finally {removing=false;}
+      return false;
+    } finally {removing=false;renderSignature='';scheduleRender();}
   }
   async function removeBundle(id) {
     if (removing) return;
@@ -626,20 +650,80 @@
     removing = true;
     try {
       for (const p of parts) await subtractCart(p.code, p.q);
-      saveRecords(records.filter(r => r.id !== id));
-      syncNote();
-      renderSignature = '';
-      scheduleRender();
+      saveRecords(getRecords().filter(r => r.id !== id));
       if (!$('.removeable[data-micro-sku]')) location.reload(); // refresh checkout totals
+      return true;
     } catch (e) {
       console.error('[ZB] Remove bundle failed:',e);
       reconcileRecords();
-      scheduleRender();
       alert('Balíček se nepodařilo kompletně odebrat. Zkontrolujte košík.');
-    } finally { removing = false; }
+      return false;
+    } finally { removing = false; renderSignature='';scheduleRender(); }
+  }
+  async function setStandaloneQuantity(c, desired) {
+    if (removing || !Number.isSafeInteger(desired) || desired<0) return false;
+    const bundled=needs(reconcileRecords()).get(c)||0;
+    const current=Math.max(0,cartCount(c)-bundled);
+    const delta=desired-current;
+    if (!delta) return true;
+    removing=true;
+    try {
+      if(delta<0) await subtractCart(c,-delta);
+      else await addCart(c,delta);
+      return true;
+    } catch(err) {
+      console.error('[ZB] Standalone quantity change failed:',err);
+      alert('Nepodařilo se změnit množství. Zkontrolujte košík.');
+      return false;
+    } finally {removing=false;renderSignature='';scheduleRender();}
+  }
+  function commitQuantity(input) {
+    if (!input || input.dataset.zbPending) return;
+    const current=Number(input.dataset.zbCurrent);
+    const raw=input.value.trim();
+    const desired=Number(raw);
+    const isBundle=input.dataset.zbQuantity==='bundle';
+    // Empty/invalid is not zero. Never remove a bundle just because the user
+    // clears the field while typing. Cap a single virtual-row expansion to
+    // avoid accidentally generating thousands of local records.
+    if (!raw || !Number.isSafeInteger(desired) || desired<0 || (isBundle && desired>1000) || removing) {
+      input.value=String(current);return;
+    }
+    if (desired===current) return;
+    input.dataset.zbPending='1';
+    input.setAttribute('aria-busy','true');
+    input.readOnly=true;
+    const key=input.dataset.zbKey;
+    const operation=isBundle ? (desired===0?removeBundle(key):duplicateBundle(key,desired-1)) : setStandaloneQuantity(key,desired);
+    Promise.resolve(operation).then(ok=>{
+      // Bundles are still represented as one row per independently removable
+      // configuration. Extras retain their normal aggregated quantity.
+      if (ok && !isBundle) input.dataset.zbCurrent=String(desired);
+    }).catch(err=>console.error('[ZB] Quantity commit failed:',err)).finally(()=>{
+      input.value=input.dataset.zbCurrent;
+      input.readOnly=false;delete input.dataset.zbPending;input.removeAttribute('aria-busy');
+    });
   }
   function initCartUI() {
-    D.addEventListener('submit', e=>{if(e.target.closest?.('.zb-cart-bundle,.zb-cart-extra,.zb-widget-bundle,.zb-widget-extra,.zb-recap-bundle,.zb-recap-extra')){e.preventDefault();e.stopImmediatePropagation();}},true);
+    // Shoptet delegates quantity events on .amount / .quantity-form. Block
+    // those events for virtual inputs only, without preventing normal typing,
+    // number steppers, focus or native updates for ordinary products.
+    for (const type of ['beforeinput','input','change','focus','focusin','blur','focusout','keydown','keypress','keyup','click']) {
+      D.addEventListener(type,e=>{
+        const input=e.target?.closest?.(QUANTITY_INPUT);
+        if (!input) return;
+        e.stopImmediatePropagation();
+        if (type==='change' || type==='blur' || type==='focusout') commitQuantity(input);
+        if (type==='keydown' && e.key==='Enter' && !e.isComposing) {
+          e.preventDefault();commitQuantity(input);input.blur();
+        }
+      },true);
+    }
+    D.addEventListener('submit', e=>{
+      if (!e.target.closest?.(VIRTUAL_ROWS)) return;
+      e.preventDefault();e.stopImmediatePropagation();
+      commitQuantity($(QUANTITY_INPUT,e.target));
+    },true);
     // Capture before Shoptet's delegated .increase/.decrease/.remove-item handlers.
     D.addEventListener('click', async e => {
       const controlled=e.target.closest?.('[data-zb-remove],[data-zb-duplicate],[data-zb-extra],[data-zb-extra-remove]');
@@ -662,10 +746,7 @@
         const c=extraRemove.dataset.zbExtraRemove;
         const standalone=cartCount(c)-(needs(getRecords()).get(c)||0);
         if(standalone<=0)return;
-        removing=true;
-        try{await subtractCart(c,standalone);renderSignature='';scheduleRender();}
-        catch(err){console.error('[ZB] Standalone removal failed:',err);alert('Nepodařilo se odebrat samostatný produkt.');}
-        finally{removing=false;}
+        await setStandaloneQuantity(c,0);
         return;
       }
       const extra = e.target.closest('[data-zb-extra]');
@@ -673,14 +754,7 @@
       const c = extra.dataset.zbExtra, change = num(extra.dataset.change);
       const bundled = needs(getRecords()).get(c) || 0;
       if (change < 0 && cartCount(c) <= bundled) return;
-      removing = true;
-      try {
-        if (change < 0) await subtractCart(c,1);
-        else await addCart(c,1);
-        renderSignature = '';
-        scheduleRender();
-      } catch (err) { console.error('[ZB] Standalone quantity change failed:',err); alert('Nepodařilo se změnit množství.'); }
-      finally { removing = false; }
+      await setStandaloneQuantity(c,Math.max(0,cartCount(c)-bundled+change));
     }, true);
     D.addEventListener('ShoptetCartUpdated', () => { renderSignature=''; scheduleRender(); });
     D.addEventListener('ShoptetDataLayerUpdated', scheduleRender);
