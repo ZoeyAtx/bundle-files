@@ -1,12 +1,12 @@
-/* Universal Shoptet bundle engine v6.11 — configure products and boxes in HTML only. */
+/* Universal Shoptet bundle engine v6.12 — configure products and boxes in HTML only. */
 (() => {
   'use strict';
   if (window.__zbBundleV6) {
-    if (window.__zbBundleVersion !== '6.11') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
+    if (window.__zbBundleVersion !== '6.12') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
     return;
   }
   window.__zbBundleV6 = true;
-  window.__zbBundleVersion = '6.11';
+  window.__zbBundleVersion = '6.12';
 
   const D = document;
   const $ = (s, root = D) => root.querySelector(s);
@@ -19,7 +19,7 @@
   const BEGIN = '--- DÁRKOVÉ BALÍČKY ---';
   const END = '--- KONEC DÁRKOVÝCH BALÍČKŮ ---';
   const DEBUG = false; // Set true for storefront diagnostics.
-  const log = (...args) => { if (DEBUG) console.log('[ZB v6.11]', ...args); };
+  const log = (...args) => { if (DEBUG) console.log('[ZB v6.12]', ...args); };
   const dl = k => { try { return typeof getShoptetDataLayer === 'function' ? getShoptetDataLayer(k) : null; } catch { return null; } };
   const api = () => window.shoptet?.cartShared;
   const getRecords = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(r => r && r.id && Array.isArray(r.items) && r.box?.code) : []; } catch { return []; } };
@@ -91,11 +91,9 @@
       code:row.dataset.microSku, q:num($('input.amount[name="amount"]', row)?.value, 0),
       itemId:$('input[name="itemId"]', row)?.value || null,
       priceId:$('input[name="priceId"]', row)?.value || null,
-      unitPrice:priceFromText($('.p-price', row)?.textContent) ?? (() => {
-        const total=priceFromText($('[data-testid="cartWidgetProductPrice"]',row)?.textContent);
-        const count=num($('input.amount[name="amount"]',row)?.value,0);
-        return total!==null && count>0 ? total/count : null;
-      })()
+      // Only expose an actual unit price here. A responsive widget price
+      // might already be per piece, so never infer a unit from it blindly.
+      unitPrice:readNativeUnitPrice(row)
     }));
   }
   const cartCount = c => sumBy(cartLines().filter(x => x.code === c), x => x.q);
@@ -224,18 +222,41 @@
   }
 
   // Cart/checkout presentation: underlying Shoptet rows and totals remain untouched.
-  function actualPrice(c, domRow, line, fallback) {
-    if (domRow) {
-      const totalRoot=$('.p-total, .cart-item-price',domRow);
-      const totalNode=totalRoot && ($('[data-testid="cartPrice"], .price-final, .price',totalRoot)||totalRoot);
-      const total=priceFromText(totalNode?.textContent);
-      if(total!==null && line?.q>0) return total/line.q;
-      const unitRoot=$('.p-price',domRow);
-      const unitNode=unitRoot && ($('[data-testid="cartItemPrice"], .price-final, .price',unitRoot)||unitRoot);
-      const unit=priceFromText(unitNode?.textContent);
-      if(unit!==null) return unit;
+  function readNativeUnitPrice(row) {
+    if (!row) return null;
+    const root=$('.p-price, .p-price-mobile',row);
+    const explicit=$('[data-testid="cartItemPrice"], [data-unit-price]',row);
+    if (root) {
+      const node=$('[data-testid="cartItemPrice"]',root)||$('.price-final, .price',root)||root;
+      const value=priceFromText(node.textContent);
+      if (value!==null) return value;
     }
-    return Number.isFinite(line?.unitPrice) ? line.unitPrice : fallback;
+    if (explicit) {
+      const value=priceFromText(explicit.getAttribute('data-unit-price')||explicit.textContent);
+      if (value!==null) return value;
+    }
+    return null;
+  }
+  function readNativeLinePrice(row) {
+    if (!row) return null;
+    const root=$('.p-total, .cart-item-price',row);
+    if (!root) return null;
+    const node=$('[data-testid="cartPrice"]',root)||$('.price-final, .price',root)||root;
+    return priceFromText(node.textContent);
+  }
+  function unitFromAmbiguousPrice(value, count, fallback) {
+    if (!Number.isFinite(value) || !(count>0)) return fallback;
+    // If the only available mobile price equals the known per-piece price,
+    // it may be a unit price, not a line total. Do not divide it again.
+    // This is a last-resort heuristic, never used over a live unit price.
+    if (count>1 && Number.isFinite(fallback) && Math.abs(value-fallback)<0.005) return value;
+    return value/count;
+  }
+  function actualPrice(c, domRow, line, fallback) {
+    const unit=readNativeUnitPrice(domRow);
+    if (Number.isFinite(unit)) return unit;
+    if (Number.isFinite(line?.unitPrice)) return line.unitPrice;
+    return unitFromAmbiguousPrice(readNativeLinePrice(domRow),line?.q,fallback);
   }
   // The product's real title is independent of the selected bundle type.
   function productTitle(doc = D) {
@@ -558,7 +579,7 @@
     const signature = JSON.stringify({
       ids:records.map(r => [r.id,bundleLabel(r)]),
       cart:cartLines().map(x => [x.code,x.q,x.itemId,x.unitPrice]),
-      main:main.map(x => [x.dataset.microSku,$('.p-price',x)?.textContent,$('.p-total',x)?.textContent]), recap:recaps.map(x => [x.dataset.microSku,$('.cart-item-price',x)?.textContent])
+      main:main.map(x => [x.dataset.microSku,readNativeUnitPrice(x),readNativeLinePrice(x)]), recap:recaps.map(x => [x.dataset.microSku,readNativeUnitPrice(x),readNativeLinePrice(x)])
     });
     const required = needs(records);
     const hasAllParts = rows => [...required.keys()].every(c => rows.some(row => row.dataset.microSku === c));
@@ -653,7 +674,8 @@
       const rows=$$('.cart-widget-product[data-micro-sku]',container);
       const signature=JSON.stringify({
         records:records.map(r=>[r.id,bundleLabel(r),r.image,r.box?.code,r.items.map(x=>[x.code,x.q])]),
-        rows:rows.map(row=>[row.dataset.microSku,widgetRowQty(row),widgetRowPrice(row),$('input[name="itemId"]',row)?.value])
+        rows:rows.map(row=>[row.dataset.microSku,widgetRowQty(row),widgetRowPrice(row),readNativeUnitPrice(row),$('input[name="itemId"]',row)?.value]),
+        cart:cartLines().map(x=>[x.code,x.q,x.unitPrice])
       });
       const grouped=$$('.zb-widget-bundle',container);
       const hidden=rows.filter(row=>required.has(row.dataset.microSku));
@@ -665,25 +687,27 @@
       $$('.zb-widget-bundle,.zb-widget-extra',container).forEach(el=>el.remove());
       $$('.cart-widget-product.zb-hidden-original',container).forEach(el=>el.classList.remove('zb-hidden-original'));
       if(!records.length || !rows.length) continue;
-      const byCode=new Map(), counts=new Map(), unitPrices=new Map();
+      const byCode=new Map(), counts=new Map();
       for(const row of rows) {
-        const c=row.dataset.microSku, count=widgetRowQty(row), total=widgetRowPrice(row);
+        const c=row.dataset.microSku, count=widgetRowQty(row);
         if(!byCode.has(c)) byCode.set(c,row);
         counts.set(c,(counts.get(c)||0)+count);
-        if(total!==null) {
-          const old=unitPrices.get(c) || {total:0,qty:0};
-          old.total+=total;old.qty+=count;unitPrices.set(c,old);
-        }
       }
       // If Shoptet is still loading the widget, leave every native item visible.
       if([...required].some(([c,q])=>!byCode.has(c) || (counts.get(c)||0)<q)) continue;
       const units=new Map();
       for(const [c, row] of byCode) {
-        const observed=unitPrices.get(c);
         const fallback=records.flatMap(partList).find(p=>p.code===c)?.price;
+        const explicit=readNativeUnitPrice(row);
         const layerUnit=cartLines().find(x=>x.code===c)?.unitPrice;
-        units.set(c,observed?.qty>0 ? observed.total/observed.qty :
-          (Number.isFinite(layerUnit) ? layerUnit : fallback));
+        // Use a live unit price before trying to divide the widget's text.
+        // For multiple physical rows of the same SKU, normalize each row
+        // individually, then weight by its quantity.
+        const matching=rows.filter(el=>el.dataset.microSku===c);
+        const inferred=matching.map(el=>({q:widgetRowQty(el),unit:unitFromAmbiguousPrice(widgetRowPrice(el),widgetRowQty(el),fallback)}));
+        units.set(c,Number.isFinite(explicit)?explicit:Number.isFinite(layerUnit)?layerUnit:
+          inferred.every(x=>Number.isFinite(x.unit))&&sumBy(inferred,x=>x.q)>0?
+            sumBy(inferred,x=>x.q*x.unit)/sumBy(inferred,x=>x.q):fallback);
       }
       const anchor=rows.find(row=>required.has(row.dataset.microSku));
       for(const r of records) {
@@ -807,6 +831,14 @@
   }
   window.__zbCartDiagnostics=()=>({version:window.__zbBundleVersion,viewport:innerWidth,
     nativeQuantityFields:$$(NATIVE_AMOUNT).filter(el=>!!el.getClientRects().length).map(el=>({html:el.outerHTML,virtual:!!el.closest(VIRTUAL_ROWS),rowClasses:el.closest('tr,.cart-widget-product,.cart-item')?.className||'',sku:el.closest('[data-micro-sku]')?.dataset.microSku||null})),
+    physicalPrices:$$('.removeable[data-micro-sku], #cart-widget .cart-widget-product[data-micro-sku], .order-summary-top .cart-item[data-micro-sku]').map(row=>{
+      const sku=row.dataset.microSku,line=cartLines().find(x=>x.code===sku);
+      const fallback=getRecords().flatMap(partList).find(p=>p.code===sku)?.price;
+      const widget=row.matches('.cart-widget-product');
+      const unit=readNativeUnitPrice(row),total=widget?widgetRowPrice(row):readNativeLinePrice(row);
+      return {sku,quantity:line?.q,unitFromMarkup:unit,unitFromCart:line?.unitPrice,displayedNativePrice:total,savedUnit:fallback,
+        resolvedUnit:widget?(unit??line?.unitPrice??unitFromAmbiguousPrice(total,widgetRowQty(row),fallback)):actualPrice(sku,row,line,fallback)};
+    }),
     rows:$$('.zb-cart-bundle,.zb-widget-bundle,.zb-recap-bundle').map(row=>({classes:row.className,
       fields:$$('input',row).map(el=>({classes:el.className,value:el.value,name:el.name,visible:!!el.getClientRects().length})),
       prices:$$('.p-price,.p-total,.cart-item-price,.price-final,.price,.mobile-price,.price-mobile,[data-zb-rendered-price]',row).map(el=>({classes:el.className,text:el.textContent.trim(),visible:!!el.getClientRects().length})),
