@@ -1,8 +1,12 @@
-/* Universal Shoptet bundle engine v6.6 — configure products and boxes in HTML only. */
+/* Universal Shoptet bundle engine v6.8 — configure products and boxes in HTML only. */
 (() => {
   'use strict';
-  if (window.__zbBundleV6) return;
+  if (window.__zbBundleV6) {
+    if (window.__zbBundleVersion !== '6.8') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
+    return;
+  }
   window.__zbBundleV6 = true;
+  window.__zbBundleVersion = '6.8';
 
   const D = document;
   const $ = (s, root = D) => root.querySelector(s);
@@ -15,7 +19,7 @@
   const BEGIN = '--- DÁRKOVÉ BALÍČKY ---';
   const END = '--- KONEC DÁRKOVÝCH BALÍČKŮ ---';
   const DEBUG = false; // Set true for storefront diagnostics.
-  const log = (...args) => { if (DEBUG) console.log('[ZB v6.6]', ...args); };
+  const log = (...args) => { if (DEBUG) console.log('[ZB v6.8]', ...args); };
   const dl = k => { try { return typeof getShoptetDataLayer === 'function' ? getShoptetDataLayer(k) : null; } catch { return null; } };
   const api = () => window.shoptet?.cartShared;
   const getRecords = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(r => r && r.id && Array.isArray(r.items) && r.box?.code) : []; } catch { return []; } };
@@ -228,39 +232,166 @@
     }
     return Number.isFinite(line?.unitPrice) ? line.unitPrice : fallback;
   }
-  const listHtml = r => partList(r).map(p => `<li>${p.q}× ${esc(p.name)}</li>`).join('');
-  const bundleImage = (r, className = 'zb-bundle-image') => {
-    const src = imageUrl(r.image);
-    return src ? `<img class="${className}" src="${esc(src)}" alt="${esc(r.type)}" loading="lazy">` :
-      `<span class="${className} zb-bundle-image-empty" aria-hidden="true">Balíček</span>`;
-  };
-  const bundleDetails = r => `<details class="zb-bundle-details"><summary>Obsah balíčku (${sumBy(partList(r), p => p.q)} položek)</summary><ul>${listHtml(r)}</ul></details>`;
-  function makeMainRow(r, total) {
-    const tr = D.createElement('tr');
-    tr.className = 'zb-virtual zb-cart-bundle';
-    tr.innerHTML = `<td class="cart-p-image">${bundleImage(r)}</td><td class="p-name"><strong>Balíček: ${esc(r.type)}</strong>${bundleDetails(r)}</td><td class="p-availability">Balíček</td><td class="p-quantity">1 balíček</td><td class="p-price"></td><td class="p-total"><strong>${money(total,r.currency,r.locale)}</strong><button type="button" class="zb-remove" data-zb-remove="${esc(r.id)}">Odebrat balíček</button></td>`;
+  // The product's real title is independent of the selected bundle type.
+  function productTitle(doc = D) {
+    return ($('.p-detail h1, .p-detail-inner h1, .p-info-wrapper h1',doc)?.textContent ||
+      $('h1',doc)?.textContent || $('meta[property="og:title"]',doc)?.content || '').replace(/\s+/g,' ').trim();
+  }
+  const bundleLabel = r => String(r.productName || r.cartName || r.type || 'Dárkový balíček').trim();
+  const titleRequests = new Map();
+  function upgradeLegacyTitles(records) {
+    for (const r of records) {
+      if (r.productName || !configuredUrl(r.productUrl) || titleRequests.has(r.productUrl)) continue;
+      const url = r.productUrl;
+      const request = fetch(url, {credentials:'same-origin'}).then(async response => {
+        if (!response.ok) return;
+        const doc = new DOMParser().parseFromString(await response.text(),'text/html');
+        // Only accept a configurator page, not a login/error/redirect page.
+        if (!$('.bundle_menu',doc)) return;
+        const name = productTitle(doc);
+        if (!name) return;
+        // Read the current records after fetch, never resurrect removed bundles.
+        const latest = getRecords();
+        let changed = false;
+        for (const item of latest) if (!item.productName && item.productUrl === url) {
+          item.productName = name; changed = true;
+        }
+        if (changed) {saveRecords(latest);renderSignature='';scheduleRender();}
+      }).catch(err => log('Could not recover product title',url,err));
+      titleRequests.set(url,request);
+    }
+  }
+  // Clone the real product structure; do not draw a second cart theme.
+  // Strip identity and action attributes but keep native layout classes.
+  function cleanClone(source, cls) {
+    const row = source.cloneNode(true);
+    row.classList.remove('zb-hidden-original');
+    row.classList.add(cls);
+    for (const el of [row,...$$('*',row)]) {
+      for (const attr of [...el.attributes]) {
+        if (attr.name === 'id' || attr.name === 'data-testid' || attr.name.startsWith('data-micro') ||
+            attr.name.startsWith('on') || /^(?:data-(?:item|price|product|cart-item|sku)(?:-|$)|form|for$)/i.test(attr.name)) el.removeAttribute(attr.name);
+      }
+    }
+    // Retain the native form tag/classes for CSS, but remove all submission
+    // destinations and IDs. The capture listeners below block virtual submits.
+    for (const form of $$('form',row)) {
+      form.removeAttribute('action');form.removeAttribute('method');form.removeAttribute('target');
+      form.removeAttribute('name');form.classList.remove('js-quantity-form','js-remove-form','csrf-enabled');
+    }
+    $$('input[type="hidden"]',row).forEach(el=>el.remove());
+    return row;
+  }
+  function setNativeName(cell, name, href) {
+    if (!cell) return;
+    const link = $('a.main-link, a',cell);
+    if (link) {
+      // Keep the original anchor and its classes, remove variant/ingredient text.
+      link.textContent=name;link.href=href;
+      for (const el of $$('small, .variant-name, .p-variant, .cart-item-variant',cell)) if (!el.contains(link)) el.remove();
+    } else cell.textContent=name;
+  }
+  function setNativeImage(cell, opts) {
+    if (!cell) return;
+    const img=$('img',cell), src=imageUrl(opts.image);
+    if (img && src) {
+      for (const a of ['srcset','data-src','data-srcset','data-original','data-lazy','data-lazy-src']) img.removeAttribute(a);
+      $$('source',cell).forEach(el=>el.remove());
+      img.src=src;img.alt=opts.name;
+    } else if (img) img.remove();
+    else if (src) {const el=D.createElement('img');el.src=src;el.alt=opts.name;($('a',cell)||cell).append(el);}
+    const link=$('a',cell);if(link)link.href=opts.href;
+  }
+  // Replace only the displayed number, preserving the theme's currency/unit
+  // spans, text alignment, typography, and any surrounding markup.
+  function replaceNumber(root, value) {
+    if (!root) return false;
+    const walker=D.createTreeWalker(root,NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n=walker.nextNode())) {
+      if (n.parentElement?.closest('button, .remove-item, .sr-only, .price-standard, .price-old, del, s')) continue;
+      if (/\d/.test(n.nodeValue)) {
+        n.nodeValue=n.nodeValue.replace(/-?\d(?:[\d.,]|[ \u00a0\u202f](?=\d))*/u,value);return true;
+      }
+    }
+    return false;
+  }
+  function setNativePrice(root, value, opts, unit=false) {
+    if (!root) return;
+    const target=$('.price-final, .price, strong',root)||root;
+    // No copied discount/old price from the template product.
+    $$('.price-standard, .price-old, .price-save, del, s',root).forEach(el=>el.remove());
+    const formatted=Number.isFinite(value)?new Intl.NumberFormat(opts.locale||'cs-CZ',{maximumFractionDigits:2}).format(value):'—';
+    if (!replaceNumber(target,formatted)) target.textContent=widgetMoney(value,opts.currency,opts.locale)+(unit?' / ks':'');
+    else if (unit && !/\/\s*ks/i.test(root.textContent) && !$('.price-unit, .unit',root)) target.append(' / ks');
+  }
+  function nativeMainRow(source, opts) {
+    const tr=cleanClone(source,opts.bundle?'zb-cart-bundle':'zb-cart-extra');
+    tr.dataset.zbVirtual=opts.bundle?opts.id:opts.code;
+    opts.href=opts.href||'/kosik/';
+    setNativeImage($('.cart-p-image',tr),opts);
+    setNativeName($('.p-name',tr),opts.name,opts.href);
+    const availability=$('.p-availability',tr);
+    if (opts.bundle && availability) {
+      const label=$('.availability-label',availability)||availability;
+      if (opts.inStock) {
+        label.textContent='Skladem';
+        // Remove stock count belonging to the cloned template product.
+        if(label!==availability) for(const n of [...availability.childNodes]) if(n!==label && !n.contains(label)) n.remove();
+      } else availability.replaceChildren();
+    }
+    const quantity=$('.p-quantity',tr);
+    if (quantity) {
+      let input=$('input.amount',quantity), minus=$('.decrease',quantity), plus=$('.increase',quantity);
+      if (!input || !minus || !plus) {
+        quantity.innerHTML='<div class="quantity-form"><span class="quantity"><button type="button" class="decrease"><span class="decrease__sign">−</span></button><label><input type="number" class="amount" min="1"></label><button type="button" class="increase"><span class="increase__sign">+</span></button></span></div>';
+        input=$('input.amount',quantity);minus=$('.decrease',quantity);plus=$('.increase',quantity);
+      }
+      input.value=String(opts.amount);input.setAttribute('value',String(opts.amount));input.readOnly=true;
+      input.removeAttribute('name');input.removeAttribute('max');input.removeAttribute('disabled');
+      for (const [btn,change] of [[minus,-1],[plus,1]]) {
+        btn.setAttribute('type','button');btn.removeAttribute('disabled');btn.removeAttribute('name');btn.removeAttribute('href');
+        if(opts.bundle)btn.setAttribute(change>0?'data-zb-duplicate':'data-zb-remove',opts.id);
+        else {btn.setAttribute('data-zb-extra',opts.code);btn.setAttribute('data-change',String(change));}
+        btn.setAttribute('aria-label',change>0?'Zvýšit množství':'Snížit množství');
+      }
+    }
+    setNativePrice($('.p-price',tr),opts.unit,opts,true);
+    setNativePrice($('.p-total',tr),opts.total,opts);
+    let remove=$('.remove-item, .p-remove button, .p-delete button',tr);
+    if (!remove) {
+      remove=D.createElement('button');remove.className='remove-item';
+      ($('.p-remove, .p-delete, .p-total',tr)||tr.lastElementChild).append(remove);
+    }
+    remove.setAttribute('type','button');remove.removeAttribute('href');remove.removeAttribute('name');remove.removeAttribute('disabled');
+    remove.setAttribute('aria-label',opts.bundle?'Odebrat celý balíček':'Odebrat samostatný produkt');
+    remove.setAttribute(opts.bundle?'data-zb-remove':'data-zb-extra-remove',opts.bundle?opts.id:opts.code);
+    $$('button',tr).filter(b=>!b.matches('[data-zb-remove],[data-zb-duplicate],[data-zb-extra],[data-zb-extra-remove]')).forEach(b=>b.remove());
     return tr;
   }
-  function makeMainExtra(c, name, amount, unit, currency, locale) {
-    const tr = D.createElement('tr');
-    tr.className = 'zb-virtual zb-cart-extra';
-    tr.innerHTML = `<td class="cart-p-image"></td><td class="p-name"><strong>${esc(name)}</strong><small>Samostatně mimo balíčky</small></td><td class="p-availability"></td><td class="p-quantity"><button type="button" data-zb-extra="${esc(c)}" data-change="-1" aria-label="Snížit množství">−</button> ${amount} ks <button type="button" data-zb-extra="${esc(c)}" data-change="1" aria-label="Zvýšit množství">+</button></td><td class="p-price">${money(unit,currency,locale)}</td><td class="p-total">${money(unit*amount,currency,locale)}</td>`;
-    return tr;
+  function makeMainRow(r,total,source,inStock) {
+    return nativeMainRow(source,{bundle:true,id:r.id,name:bundleLabel(r),image:r.image,href:r.productUrl,amount:1,unit:total,total,currency:r.currency,locale:r.locale,inStock});
   }
-  function makeRecapRow(r, total) {
-    // Deliberately do NOT use Shoptet's .cart-item class here: the theme gives it
-    // multiple narrow grid columns, which previously crushed the bundle description.
-    const div = D.createElement('div');
-    div.className = 'zb-virtual zb-recap-bundle';
-    const canRemove = groupedParts(r).every(p => cartLines().some(line => line.code === p.code && !!readIdsFromDom(p.code, line).itemId));
-    div.innerHTML = `<div class="zb-recap-head">${bundleImage(r)}<div class="zb-recap-meta"><strong class="zb-recap-title">${esc(r.type)}</strong><span class="zb-recap-sub">Dárkový balíček · 1×</span><strong class="zb-recap-price">${money(total,r.currency,r.locale)}</strong></div></div>${bundleDetails(r)}<div class="zb-recap-actions">${canRemove ? `<button type="button" class="zb-remove" data-zb-remove="${esc(r.id)}">Odebrat balíček</button>` : '<a class="zb-edit-link" href="/kosik/">Upravit v košíku</a>'}</div>`;
-    return div;
+  function makeMainExtra(c,name,amount,unit,currency,locale,source) {
+    return nativeMainRow(source,{bundle:false,code:c,name,amount,unit,total:unit*amount,currency,locale,href:$('.p-name a',source)?.getAttribute('href'),image:$('.cart-p-image img',source)?.getAttribute('src')});
   }
-  function makeRecapExtra(name, amount, total, currency, locale) {
-    const div = D.createElement('div');
-    div.className = 'zb-virtual zb-recap-extra';
-    div.innerHTML = `<div class="zb-recap-extra-name">${esc(name)} <small>(samostatně)</small></div><span class="zb-recap-extra-count">${amount}×</span><strong class="zb-recap-extra-price">${money(total,currency,locale)}</strong>`;
-    return div;
+  function nativeRecapRow(source,opts) {
+    const row=cleanClone(source,opts.bundle?'zb-recap-bundle':'zb-recap-extra');
+    setNativeName($('.cart-item-name',row),opts.name,opts.href||'/kosik/');
+    if(opts.bundle) setNativeImage($('.cart-item-image, .cart-p-image',row),{...opts,href:opts.href||'/kosik/'});
+    const amount=$('.cart-item-amount',row);
+    if(amount && !replaceNumber(amount,String(opts.amount))) amount.textContent=`${opts.amount} ks`;
+    setNativePrice($('.cart-item-price',row),opts.total,opts);
+    // Recap is read-only on this theme. Do not add a photo or controls that
+    // ordinary products do not have. Never retain ingredient action links.
+    $$('form, button, .remove-item, .cart-item-delete',row).forEach(el=>el.remove());
+    return row;
+  }
+  function makeRecapRow(r,total,source) {
+    return nativeRecapRow(source,{bundle:true,name:bundleLabel(r),image:r.image,href:r.productUrl,amount:1,total,currency:r.currency,locale:r.locale});
+  }
+  function makeRecapExtra(name,amount,total,currency,locale,source) {
+    return nativeRecapRow(source,{bundle:false,name,amount,total,currency,locale,href:$('.cart-item-name a',source)?.getAttribute('href')});
   }
   function renderGroupContainer(rows, records, isMain) {
     if (!rows.length || !records.length) return;
@@ -280,19 +411,22 @@
       const fallback = rec ? partList(rec).find(p => p.code === c)?.price ?? null : null;
       units.set(c, actualPrice(c, row, line, fallback));
     }
-    const anchor = rows[0];
+    const anchor = rows.find(row=>needed.has(row.dataset.microSku)) || rows[0];
+    const template = rows.find(row=>!needed.has(row.dataset.microSku)) || anchor;
     for (const r of records) {
       const total = sumBy(partList(r), p => (units.get(p.code) ?? p.price ?? 0) * p.q);
-      anchor.before(isMain ? makeMainRow(r,total) : makeRecapRow(r,total));
+      const source = template;
+      const inStock = isMain && partList(r).every(p => /^skladem\b/i.test($('.p-availability',byCode.get(p.code))?.textContent.trim()||''));
+      anchor.before(isMain ? makeMainRow(r,total,source,inStock) : makeRecapRow(r,total,source));
     }
     for (const [c, bundled] of needed) {
       const remaining = (counts.get(c) || 0) - bundled;
       if (remaining > 0) {
         const row = byCode.get(c);
-        const name = $('.p-name', row)?.textContent.trim() || $('.cart-item-name', row)?.textContent.trim() || c;
+        const name = $('.p-name a, .cart-item-name a',row)?.textContent.trim() || $('.p-name', row)?.textContent.trim() || $('.cart-item-name', row)?.textContent.trim() || c;
         const unit = units.get(c) ?? 0;
         const base = records[0];
-        anchor.before(isMain ? makeMainExtra(c,name,remaining,unit,base.currency,base.locale) : makeRecapExtra(name,remaining,remaining*unit,base.currency,base.locale));
+        anchor.before(isMain ? makeMainExtra(c,name,remaining,unit,base.currency,base.locale,row) : makeRecapExtra(name,remaining,remaining*unit,base.currency,base.locale,row));
       }
     }
     for (const row of rows) if (needed.has(row.dataset.microSku)) row.classList.add('zb-hidden-original');
@@ -300,10 +434,11 @@
   let renderPending = false, renderSignature = '';
   function renderGroups() {
     const records = reconcileRecords();
+    upgradeLegacyTitles(records);
     const main = $$('.removeable[data-micro-sku]');
     const recaps = $$('.order-summary-top .cart-items .cart-item[data-micro-sku]');
     const signature = JSON.stringify({
-      ids:records.map(r => r.id),
+      ids:records.map(r => [r.id,bundleLabel(r)]),
       cart:cartLines().map(x => [x.code,x.q,x.itemId]),
       main:main.map(x => x.dataset.microSku), recap:recaps.map(x => x.dataset.microSku)
     });
@@ -378,7 +513,7 @@
   }
   function makeWidgetRow(r, total, source) {
     const div=nativeWidgetRow(source,{
-      bundle:true,id:r.id,name:r.type,image:r.image,
+      bundle:true,id:r.id,name:bundleLabel(r),image:r.image,
       href:r.productUrl || '/kosik/',amount:1,total,currency:r.currency,locale:r.locale
     });
     div.dataset.zbBundleId=r.id;
@@ -399,7 +534,7 @@
     for(const container of $$('#cart-widget .cart-widget-products-inner')) {
       const rows=$$('.cart-widget-product[data-micro-sku]',container);
       const signature=JSON.stringify({
-        records:records.map(r=>[r.id,r.type,r.image,r.box?.code,r.items.map(x=>[x.code,x.q])]),
+        records:records.map(r=>[r.id,bundleLabel(r),r.image,r.box?.code,r.items.map(x=>[x.code,x.q])]),
         rows:rows.map(row=>[row.dataset.microSku,widgetRowQty(row),widgetRowPrice(row),$('input[name="itemId"]',row)?.value])
       });
       const grouped=$$('.zb-widget-bundle',container);
@@ -504,6 +639,7 @@
     } finally { removing = false; }
   }
   function initCartUI() {
+    D.addEventListener('submit', e=>{if(e.target.closest?.('.zb-cart-bundle,.zb-cart-extra,.zb-widget-bundle,.zb-widget-extra,.zb-recap-bundle,.zb-recap-extra')){e.preventDefault();e.stopImmediatePropagation();}},true);
     // Capture before Shoptet's delegated .increase/.decrease/.remove-item handlers.
     D.addEventListener('click', async e => {
       const controlled=e.target.closest?.('[data-zb-remove],[data-zb-duplicate],[data-zb-extra],[data-zb-extra-remove]');
@@ -790,6 +926,7 @@
         const record={
           id:`${Date.now()}-${Math.random().toString(36).slice(2,10)}`,
           t:Date.now(), type:activeType().name, typeId:current,
+          productName:productTitle() || m.dataset.cartName || m.dataset.title || activeType().name,
           currency,locale,size:size(),image:configuratorImage,productUrl:location.pathname,
           box:{code:box.code,name:box.name,capacity:box.capacity,price:box.price},
           items:selected.map(p=>({code:p.code,name:p.name,q:p.q,price:p.price}))

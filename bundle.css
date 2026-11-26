@@ -1,4 +1,4 @@
-/* Complete CSS: original bundle selector + native Shoptet hover-cart V6.6. */
+/* Complete CSS: original bundle selector + native Shoptet cart and hover-cart V6.8. */
 .bundle_menu,.bundle-source-list,.bundle-rules,.bundle-types,.bundle-boxes,.bundle-combinations{display:none!important}
 .zb-on .p-info-wrapper>.add-to-cart,.zb-on .p-info-wrapper>.p-info-grid,.zb-on .p-info-wrapper>.p-info-headline,.zb-on .p-info-wrapper .detail-price-block,.zb-on .p-info-wrapper .detail-availability-block,.zb-on .p-info-wrapper .p-final-price-wrapper,.zb-on .p-info-wrapper .availability-value{display:none!important}
 #zb{width:100%;max-width:100%;min-width:0;box-sizing:border-box;margin:0 0 24px;padding:18px;background:#fff;font-family:var(--template-font,"Open Sans"),sans-serif}
@@ -19,52 +19,16 @@
 #zb aside>button{width:100%;padding:12px;border:0;border-radius:22px;background:var(--color-secondary,#27ae60);color:#fff;font-weight:700;cursor:pointer}#zb aside>button:disabled{opacity:.4;cursor:not-allowed}#zb aside>em{display:block;text-align:center;margin-top:8px;font-size:12px}
 @media(max-width:550px){.zb-products{grid-template-columns:1fr}}
 
-/* V6.5 additions */
+/* Bundle state and hidden physical rows */
 .bundle-rules{display:none!important}
 .zb-hidden-original{display:none!important}
 .zy button:disabled{opacity:.35;cursor:not-allowed}
 .zb-products article.out{opacity:.4}
 .zb-products article.out .a,.zb-products article.out .m{pointer-events:none}
 #zb .zb-message{min-height:1.3em}
-.zb-virtual{background:#f8faf8}
-.zb-cart-bundle,.zb-cart-extra{border-left:3px solid var(--color-secondary,#27ae60)}
-.zb-cart-bundle .p-name ul,.zb-recap-bundle ul{margin:8px 0 0;padding-left:18px;font-size:12px;line-height:1.5}
-.zb-cart-extra .p-name small{display:block;color:#777;font-size:11px}
-.zb-cart-extra .p-quantity button{border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;min-width:27px;min-height:27px}
-.zb-remove,.zb-edit-link{display:block;margin-top:8px;padding:0;border:0;background:none;color:#a33;cursor:pointer;font:inherit;font-size:12px;text-decoration:underline}
-.zb-edit-link{color:inherit}
-/* Own card layout, independent of Shoptet's narrow .cart-item grid. */
-.order-summary-top .cart-items > .zb-recap-bundle,
-.order-summary-top .cart-items > .zb-recap-extra,
-.zb-recap-bundle,.zb-recap-extra{display:block!important;float:none!important;clear:both;box-sizing:border-box;width:100%;max-width:100%;min-width:0;margin:8px 0;padding:10px;border:1px solid #e5e9e5;border-radius:8px;background:#fff}
-.zb-recap-bundle .zb-recap-head{display:grid!important;grid-template-columns:52px minmax(0,1fr)!important;gap:9px;align-items:start;min-width:0;width:100%}
-.zb-recap-bundle .zb-recap-meta{min-width:0;max-width:100%;overflow-wrap:break-word;word-break:normal;white-space:normal}
-.zb-recap-title{display:block;font-size:13px;line-height:1.35;font-weight:700}
-.zb-recap-sub{display:block;margin-top:2px;font-size:11px;line-height:1.3;color:#777}
-.zb-recap-price{display:block;margin-top:5px;font-size:14px;line-height:1.3;font-weight:700}
-.zb-bundle-image{display:block;width:52px;max-width:100%;height:52px;object-fit:contain;border-radius:6px;background:#f5f6f5}
-.zb-bundle-image-empty{box-sizing:border-box;padding:5px;font-size:9px;line-height:1.3;color:#777;text-align:center;align-content:center;overflow-wrap:anywhere}
-.zb-cart-bundle .cart-p-image .zb-bundle-image{width:68px;height:68px}
-.zb-bundle-details{margin-top:9px;padding-top:8px;border-top:1px solid #e5e9e5;min-width:0}
-.zb-bundle-details summary{display:list-item;cursor:pointer;font-size:12px;line-height:1.4;font-weight:600;color:#444;overflow-wrap:break-word}
-.zb-bundle-details ul{display:block!important;list-style:disc outside;margin:8px 0 0;padding:0 0 0 19px;max-width:100%;min-width:0;font-size:12px;line-height:1.5;white-space:normal}
-.zb-bundle-details li{display:list-item!important;overflow-wrap:anywhere;word-break:normal;white-space:normal;margin:0 0 4px}
-.zb-recap-actions{margin-top:5px}
-.zb-recap-actions .zb-remove,.zb-recap-actions .zb-edit-link{margin-top:4px;font-size:11px}
-.zb-recap-extra{font-size:12px;line-height:1.4;overflow-wrap:break-word}
-.zb-recap-extra-name{font-weight:600}
-.zb-recap-extra-count{display:inline-block;margin:5px 8px 0 0;color:#777}
-.zb-recap-extra-price{display:inline-block;margin-top:5px}
 
-@media(max-width:600px){.zb-cart-bundle td,.zb-cart-extra td{padding:6px}}
-@media(max-width:260px){.zb-recap-bundle .zb-recap-head{grid-template-columns:42px minmax(0,1fr)!important;gap:7px}.zb-recap-bundle .zb-bundle-image{width:42px;height:42px}}
-
-/* V6.6: popup bundles are cloned native .cart-widget-product rows.
-   Do not force custom grids, cards, borders or fonts on them. */
-#cart-widget .cart-widget-product.zb-hidden-original{display:none!important}
-#cart-widget .cart-widget-product.zb-widget-bundle,
-#cart-widget .cart-widget-product.zb-widget-extra{background:inherit}
-#cart-widget .zb-widget-bundle .cart-widget-product-amount input[readonly],
-#cart-widget .zb-widget-extra .cart-widget-product-amount input[readonly]{cursor:default}
-#cart-widget .zb-widget-bundle .cart-widget-product-delete .remove-item:disabled,
-#cart-widget .zb-widget-extra .cart-widget-product-delete .remove-item:disabled{opacity:.45;cursor:wait}
+/* Native cart rows inherit the storefront theme without custom decoration. */
+.zb-cart-bundle input[readonly],.zb-cart-extra input[readonly],
+.zb-widget-bundle input[readonly],.zb-widget-extra input[readonly]{cursor:default}
+.zb-widget-bundle .remove-item:disabled,.zb-widget-extra .remove-item:disabled,
+.zb-cart-bundle .remove-item:disabled,.zb-cart-extra .remove-item:disabled{cursor:wait}
