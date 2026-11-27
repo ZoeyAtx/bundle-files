@@ -1,12 +1,12 @@
-/* Universal Shoptet bundle engine v6.12 — configure products and boxes in HTML only. */
+/* Universal Shoptet bundle engine v6.13 — configure products and boxes in HTML only. */
 (() => {
   'use strict';
   if (window.__zbBundleV6) {
-    if (window.__zbBundleVersion !== '6.12') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
+    if (window.__zbBundleVersion !== '6.13') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
     return;
   }
   window.__zbBundleV6 = true;
-  window.__zbBundleVersion = '6.12';
+  window.__zbBundleVersion = '6.13';
 
   const D = document;
   const $ = (s, root = D) => root.querySelector(s);
@@ -19,7 +19,7 @@
   const BEGIN = '--- DÁRKOVÉ BALÍČKY ---';
   const END = '--- KONEC DÁRKOVÝCH BALÍČKŮ ---';
   const DEBUG = false; // Set true for storefront diagnostics.
-  const log = (...args) => { if (DEBUG) console.log('[ZB v6.12]', ...args); };
+  const log = (...args) => { if (DEBUG) console.log('[ZB v6.13]', ...args); };
   const dl = k => { try { return typeof getShoptetDataLayer === 'function' ? getShoptetDataLayer(k) : null; } catch { return null; } };
   const api = () => window.shoptet?.cartShared;
   const getRecords = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(r => r && r.id && Array.isArray(r.items) && r.box?.code) : []; } catch { return []; } };
@@ -532,6 +532,45 @@
   function makeRecapExtra(name,amount,total,currency,locale,source) {
     return nativeRecapRow(source,{bundle:false,name,amount,total,currency,locale,href:$('.cart-item-name a',source)?.getAttribute('href')});
   }
+  // Read-only bundle contents, independent of Shoptet's real cart forms.
+  // Remember open state when Shoptet rebuilds a cart row in the same page.
+  const openBundleContents = new Set();
+  function appendBundleContents(row, record, units, isMain) {
+    const nameCell = $(isMain ? '.p-name' : '.cart-item-name', row);
+    if (!nameCell) return;
+    const key = `${isMain ? 'cart' : 'recap'}:${record.id}`;
+    const details = D.createElement('details');
+    details.className = 'zb-contents';
+    const summary = D.createElement('summary');
+    summary.textContent = 'Produkty';
+    details.append(summary);
+    const list = D.createElement('ul');
+    list.className = 'zb-contents-list';
+    for (const part of groupedParts(record)) {
+      const item = D.createElement('li');
+      item.className = 'zb-contents-item';
+      const name = D.createElement('span');
+      name.className = 'zb-contents-name';
+      name.textContent = `${part.q}× ${part.name || part.code}`;
+      const price = D.createElement('span');
+      price.className = 'zb-contents-price';
+      const unit = units.get(part.code) ?? part.price;
+      price.textContent = widgetMoney(Number.isFinite(unit) ? unit * part.q : NaN, record.currency, record.locale);
+      item.append(name, price);
+      list.append(item);
+    }
+    details.append(list);
+    details.open = openBundleContents.has(key);
+    details.addEventListener('toggle', () => {
+      if (!details.isConnected) return;
+      if (details.open) openBundleContents.add(key);
+      else openBundleContents.delete(key);
+    });
+    // Never put the disclosure inside a product link.
+    if (nameCell.matches('a')) nameCell.after(details);
+    else nameCell.append(details);
+  }
+
   function renderGroupContainer(rows, records, isMain) {
     if (!rows.length || !records.length) return;
     const byCode = new Map();
@@ -556,7 +595,9 @@
       const total = sumBy(partList(r), p => (units.get(p.code) ?? p.price ?? 0) * p.q);
       const source = template;
       const inStock = isMain && partList(r).every(p => /^skladem\b/i.test($('.p-availability',byCode.get(p.code))?.textContent.trim()||''));
-      anchor.before(isMain ? makeMainRow(r,total,source,inStock) : makeRecapRow(r,total,source));
+      const virtual = isMain ? makeMainRow(r,total,source,inStock) : makeRecapRow(r,total,source);
+      appendBundleContents(virtual,r,units,isMain);
+      anchor.before(virtual);
     }
     for (const [c, bundled] of needed) {
       const remaining = (counts.get(c) || 0) - bundled;
@@ -573,6 +614,8 @@
   let renderPending = false, renderSignature = '';
   function renderGroups() {
     const records = reconcileRecords();
+    const validContentsKeys = new Set(records.flatMap(r => [`cart:${r.id}`, `recap:${r.id}`]));
+    for (const key of openBundleContents) if (!validContentsKeys.has(key)) openBundleContents.delete(key);
     upgradeLegacyTitles(records);
     const main = $$('.removeable[data-micro-sku]');
     const recaps = $$('.order-summary-top .cart-items .cart-item[data-micro-sku]');
