@@ -1,12 +1,12 @@
-/* Universal Shoptet bundle engine v6.13 — configure products and boxes in HTML only. */
+/* Universal Shoptet bundle engine v6.14 — configure products and boxes in HTML only. */
 (() => {
   'use strict';
   if (window.__zbBundleV6) {
-    if (window.__zbBundleVersion !== '6.13') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
+    if (window.__zbBundleVersion !== '6.14') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
     return;
   }
   window.__zbBundleV6 = true;
-  window.__zbBundleVersion = '6.13';
+  window.__zbBundleVersion = '6.14';
 
   const D = document;
   const $ = (s, root = D) => root.querySelector(s);
@@ -19,7 +19,7 @@
   const BEGIN = '--- DÁRKOVÉ BALÍČKY ---';
   const END = '--- KONEC DÁRKOVÝCH BALÍČKŮ ---';
   const DEBUG = false; // Set true for storefront diagnostics.
-  const log = (...args) => { if (DEBUG) console.log('[ZB v6.13]', ...args); };
+  const log = (...args) => { if (DEBUG) console.log('[ZB v6.14]', ...args); };
   const dl = k => { try { return typeof getShoptetDataLayer === 'function' ? getShoptetDataLayer(k) : null; } catch { return null; } };
   const api = () => window.shoptet?.cartShared;
   const getRecords = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(r => r && r.id && Array.isArray(r.items) && r.box?.code) : []; } catch { return []; } };
@@ -157,22 +157,64 @@
     }
     return complete;
   }
-  function reconcileRecords() {
-    let records = getRecords();
-    if (!hasCartData()) return records;
-    const actual = new Map(cartLines().map(x => [x.code, cartCount(x.code)]));
-    const valid = [];
-    const used = new Map();
+  function countsFromLines(lines) {
+    const counts = new Map();
+    for (const line of lines) counts.set(line.code,(counts.get(line.code)||0)+line.q);
+    return counts;
+  }
+  function matchingRecords(records, counts) {
+    const valid=[], used=new Map();
     for (const r of records) {
-      const parts = groupedParts(r);
-      const fits = parts.every(p => (used.get(p.code) || 0) + p.q <= (actual.get(p.code) || 0));
-      if (fits) {
-        valid.push(r);
-        parts.forEach(p => used.set(p.code, (used.get(p.code) || 0) + p.q));
-      } else log('Untracked incomplete bundle', r.id);
+      const parts=groupedParts(r);
+      if (!parts.every(p=>(used.get(p.code)||0)+p.q<=(counts.get(p.code)||0))) continue;
+      valid.push(r);
+      for (const p of parts) used.set(p.code,(used.get(p.code)||0)+p.q);
     }
-    if (valid.length !== records.length) { saveRecords(valid); records = valid; }
-    return records;
+    return valid;
+  }
+  // Each native cart container has its own snapshot. Do not mix desktop,
+  // mobile, popup and checkout copies of the same physical items.
+  function nativeCounts(rows, fallback) {
+    const counts=new Map();
+    for (const row of rows) {
+      const c=row.dataset.microSku;
+      const input=$('input.amount[name="amount"],input.amount',row);
+      const amount=$('.cart-item-amount',row);
+      const raw=input?.value ?? (amount ? priceFromText(amount.textContent) : null);
+      const q=raw!==null && raw!==undefined && raw!=='' && Number.isFinite(Number(raw)) ? Number(raw) : null;
+      if (q===null) { if (!counts.has(c)) counts.set(c,fallback.get(c)||0); }
+      else counts.set(c,(counts.get(c)||0)+Math.max(0,q));
+    }
+    return counts;
+  }
+  const countKey = counts => JSON.stringify([...counts].filter(([,q])=>q>0).sort(([a],[b])=>a.localeCompare(b)));
+  let missingObservation=null, missingTimer=null;
+  function resetMissingObservation() {
+    missingObservation=null;
+    if(missingTimer!==null){clearTimeout(missingTimer);missingTimer=null;}
+  }
+  function reconcileRecords() {
+    const records=getRecords();
+    if (removing || !records.length || !hasCartData()) return records;
+    const actual=countsFromLines(cartLines());
+    const valid=matchingRecords(records,actual);
+    if(valid.length===records.length){resetMissingObservation();return valid;}
+    // A missing record may be a temporarily stale data layer. Only discard
+    // after a stable, independently corroborated native cart snapshot.
+    const native=$$('.removeable[data-micro-sku], #cart-widget .cart-widget-product[data-micro-sku]');
+    const parents=[...new Set(native.map(row=>row.parentElement))];
+    const key=countKey(actual);
+    const confirmed=parents.some(parent=>countKey(nativeCounts(native.filter(row=>row.parentElement===parent),new Map()))===key)
+      || (!actual.size && !!$('.cart-empty, .empty-cart, [data-testid="emptyCart"]') && !native.length);
+    if(!confirmed){resetMissingObservation();return valid;}
+    const observation=JSON.stringify([key,records.map(r=>r.id)]);
+    if(missingObservation?.key!==observation){
+      resetMissingObservation();missingObservation={key:observation,since:Date.now()};
+      missingTimer=setTimeout(()=>{missingTimer=null;scheduleRender();},4200);
+    } else if(Date.now()-missingObservation.since>=4000){
+      saveRecords(valid);resetMissingObservation();log('Confirmed missing bundle records removed');
+    }
+    return valid;
   }
 
   // Order note: preserve customer text outside the generated section.
@@ -214,7 +256,8 @@
   }
   function initNote() {
     if (dl('pageType') === 'thankYou' || /\/dekujeme\/?(?:\?|$)/i.test(location.pathname)) { clearRecords(); return; }
-    if (hasCartData() && cartLines().length === 0) clearRecords();
+    // An empty data layer at startup is not proof that the cart is empty.
+    reconcileRecords();
     syncNote();
     D.addEventListener('submit', e => { if (!e.target?.closest?.(VIRTUAL_ROWS) && e.target?.closest?.('#order-form, form')) syncNote(); }, true);
     D.addEventListener('focusout', e => { if (e.target?.matches?.('#remark')) syncNote(); }, true);
@@ -467,7 +510,17 @@
     tr.dataset.zbVirtual=opts.bundle?opts.id:opts.code;
     opts.href=opts.href||'/kosik/';
     setNativeImage($('.cart-p-image',tr),opts);
-    setNativeName($('.p-name',tr),opts.name,opts.href);
+    const nameCell=$('.p-name',tr);
+    setNativeName(nameCell,opts.name,opts.href);
+    if(opts.bundle && nameCell) {
+      const mainLink=$('a.main-link',nameCell)||$('a',nameCell);
+      for(const el of $$('[class*="related" i], [data-testid*="related" i]',nameCell)) {
+        if(el!==mainLink && !el.contains(mainLink)) el.remove();
+      }
+      for(const el of $$('a,button,span,small',nameCell)) {
+        if(el!==mainLink && !el.contains(mainLink) && /^souvisejici produkty\b/.test(stripAccents(el.textContent).trim())) el.remove();
+      }
+    }
     const availability=$('.p-availability',tr);
     if (opts.bundle && availability) {
       const label=$('.availability-label',availability)||availability;
@@ -535,12 +588,11 @@
   // Read-only bundle contents, independent of Shoptet's real cart forms.
   // Remember open state when Shoptet rebuilds a cart row in the same page.
   const openBundleContents = new Set();
-  function appendBundleContents(row, record, units, isMain) {
-    const nameCell = $(isMain ? '.p-name' : '.cart-item-name', row);
-    if (!nameCell) return;
+  function makeBundleContents(record, units, isMain, byCode) {
     const key = `${isMain ? 'cart' : 'recap'}:${record.id}`;
     const details = D.createElement('details');
-    details.className = 'zb-contents';
+    details.className = 'zb-contents'+(isMain?'':' zb-recap-contents');
+    details.dataset.zbContentsFor=record.id;
     const summary = D.createElement('summary');
     summary.textContent = 'Produkty';
     details.append(summary);
@@ -549,14 +601,20 @@
     for (const part of groupedParts(record)) {
       const item = D.createElement('li');
       item.className = 'zb-contents-item';
+      const quantity = D.createElement('span');
+      quantity.className = 'zb-contents-qty';
+      quantity.textContent = `${part.q}×`;
       const name = D.createElement('span');
       name.className = 'zb-contents-name';
-      name.textContent = `${part.q}× ${part.name || part.code}`;
+      const native=byCode.get(part.code);
+      const cell=native && $(isMain?'.p-name':'.cart-item-name',native);
+      const link=cell && ($('a.main-link',cell)||$('a',cell));
+      name.textContent = link?.textContent.trim() || (!isMain ? cell?.textContent.trim() : '') || part.name || part.code;
       const price = D.createElement('span');
       price.className = 'zb-contents-price';
       const unit = units.get(part.code) ?? part.price;
       price.textContent = widgetMoney(Number.isFinite(unit) ? unit * part.q : NaN, record.currency, record.locale);
-      item.append(name, price);
+      item.append(quantity,name,price);
       list.append(item);
     }
     details.append(list);
@@ -566,9 +624,7 @@
       if (details.open) openBundleContents.add(key);
       else openBundleContents.delete(key);
     });
-    // Never put the disclosure inside a product link.
-    if (nameCell.matches('a')) nameCell.after(details);
-    else nameCell.append(details);
+    return details;
   }
 
   function renderGroupContainer(rows, records, isMain) {
@@ -578,10 +634,11 @@
       const c = row.dataset.microSku;
       if (!byCode.has(c)) byCode.set(c, row);
     }
-    const needed = needs(records);
-    if ([...needed.keys()].some(c => !byCode.has(c))) return; // don't hide partial order summaries
     const lines = cartLines();
-    const counts = new Map(lines.map(x => [x.code, cartCount(x.code)]));
+    const counts = nativeCounts(rows,countsFromLines(lines));
+    records=matchingRecords(records,counts);
+    if(!records.length) return;
+    const needed=needs(records);
     const units = new Map();
     for (const [c, row] of byCode) {
       const line = lines.find(x => x.code === c);
@@ -596,8 +653,17 @@
       const source = template;
       const inStock = isMain && partList(r).every(p => /^skladem\b/i.test($('.p-availability',byCode.get(p.code))?.textContent.trim()||''));
       const virtual = isMain ? makeMainRow(r,total,source,inStock) : makeRecapRow(r,total,source);
-      appendBundleContents(virtual,r,units,isMain);
-      anchor.before(virtual);
+      const details=makeBundleContents(r,units,isMain,byCode);
+      if(isMain) {
+        const nameCell=$('.p-name',virtual);
+        if(nameCell) {if(nameCell.matches('a')) nameCell.after(details);else nameCell.append(details);}
+        anchor.before(virtual);
+      } else {
+        // A sibling of the native recap row spans the entire summary, not
+        // the narrow product-name column. The normal row stays untouched.
+        virtual.dataset.zbBundleId=r.id;
+        anchor.before(virtual,details);
+      }
     }
     for (const [c, bundled] of needed) {
       const remaining = (counts.get(c) || 0) - bundled;
@@ -613,37 +679,37 @@
   }
   let renderPending = false, renderSignature = '';
   function renderGroups() {
-    const records = reconcileRecords();
-    const validContentsKeys = new Set(records.flatMap(r => [`cart:${r.id}`, `recap:${r.id}`]));
-    for (const key of openBundleContents) if (!validContentsKeys.has(key)) openBundleContents.delete(key);
+    reconcileRecords(); // maintenance only; each view allocates from its own native rows
+    const records=getRecords();
+    const validContentsKeys=new Set(records.flatMap(r=>[`cart:${r.id}`,`recap:${r.id}`]));
+    for(const key of openBundleContents) if(!validContentsKeys.has(key)) openBundleContents.delete(key);
     upgradeLegacyTitles(records);
-    const main = $$('.removeable[data-micro-sku]');
-    const recaps = $$('.order-summary-top .cart-items .cart-item[data-micro-sku]');
-    const signature = JSON.stringify({
-      ids:records.map(r => [r.id,bundleLabel(r)]),
-      cart:cartLines().map(x => [x.code,x.q,x.itemId,x.unitPrice]),
-      main:main.map(x => [x.dataset.microSku,readNativeUnitPrice(x),readNativeLinePrice(x)]), recap:recaps.map(x => [x.dataset.microSku,readNativeUnitPrice(x),readNativeLinePrice(x)])
+    const main=$$('.removeable[data-micro-sku]');
+    const recaps=$$('.order-summary-top .cart-items .cart-item[data-micro-sku]');
+    const fallback=countsFromLines(cartLines());
+    const groups=[...new Set(main.map(row=>row.parentElement))].map(parent=>({parent,rows:main.filter(row=>row.parentElement===parent),isMain:true}))
+      .concat([...new Set(recaps.map(row=>row.parentElement))].map(parent=>({parent,rows:recaps.filter(row=>row.parentElement===parent),isMain:false})));
+    const signature=JSON.stringify({
+      records:records.map(r=>[r.id,bundleLabel(r),groupedParts(r)]),
+      cart:cartLines().map(x=>[x.code,x.q,x.itemId,x.unitPrice]),
+      groups:groups.map(g=>[g.isMain,countKey(nativeCounts(g.rows,fallback)),g.rows.map(x=>[x.dataset.microSku,readNativeUnitPrice(x),readNativeLinePrice(x)])])
     });
-    const required = needs(records);
-    const hasAllParts = rows => [...required.keys()].every(c => rows.some(row => row.dataset.microSku === c));
-    const mainParents=[...new Set(main.map(row=>row.parentElement))];
-    const mainReady=mainParents.every(parent=>{const rows=main.filter(row=>row.parentElement===parent);return !hasAllParts(rows)||(rows.filter(row=>required.has(row.dataset.microSku)).every(row=>row.classList.contains('zb-hidden-original'))&&$$('.zb-cart-bundle',parent).length===records.length);});
-    const recapParents = [...new Set(recaps.map(row => row.parentElement))];
-    const recapReady = recapParents.every(parent => {
-      const rows = recaps.filter(row => row.parentElement === parent);
-      return !hasAllParts(rows) || (
-        rows.filter(row => required.has(row.dataset.microSku)).every(row => row.classList.contains('zb-hidden-original')) &&
-        $$('.zb-recap-bundle',parent).length === records.length);
+    const ready=groups.every(({parent,rows,isMain})=>{
+      const expected=matchingRecords(records,nativeCounts(rows,fallback));
+      const required=needs(expected);
+      const selector=isMain?'.zb-cart-bundle':'.zb-recap-bundle';
+      return $$(selector,parent).length===expected.length &&
+        (isMain || $$('.zb-recap-contents',parent).length===expected.length) &&
+        rows.every(row=>row.classList.contains('zb-hidden-original')===required.has(row.dataset.microSku));
     });
-    if (signature === renderSignature && (records.length === 0 || (mainReady && recapReady))) return;
-    renderSignature = signature;
-    $$('.zb-cart-bundle, .zb-cart-extra, .zb-recap-bundle, .zb-recap-extra').forEach(el => el.remove());
-    $$('.removeable.zb-hidden-original, .order-summary-top .cart-items .cart-item.zb-hidden-original').forEach(el => el.classList.remove('zb-hidden-original'));
-    if (!records.length) return;
-    for(const parent of mainParents) renderGroupContainer(main.filter(row=>row.parentElement===parent),records,true);
-    const parents = [...new Set(recaps.map(el => el.parentElement))];
-    for (const parent of parents) renderGroupContainer(recaps.filter(el => el.parentElement === parent), records, false);
+    if(signature===renderSignature && ready) return;
+    renderSignature=signature;
+    $$('.zb-cart-bundle,.zb-cart-extra,.zb-recap-bundle,.zb-recap-extra,.zb-recap-contents').forEach(el=>el.remove());
+    $$('.removeable.zb-hidden-original,.order-summary-top .cart-items .cart-item.zb-hidden-original').forEach(el=>el.classList.remove('zb-hidden-original'));
+    if(!records.length) return;
+    for(const g of groups) renderGroupContainer(g.rows,records,g.isMain);
   }
+
   // Shoptet's hover-cart is separate from the full cart and checkout. It is
   // frequently rebuilt on hover, so render directly into each live popup.
   // Do not alter the real Shoptet forms or cart totals; only hide their rows.
@@ -710,11 +776,12 @@
     });
   }
   function renderWidget() {
-    const records=getRecords();
-    const required=needs(records);
+    const saved=getRecords();
     // The popup can be present before hover, inserted on hover, or replaced in place.
     for(const container of $$('#cart-widget .cart-widget-products-inner')) {
       const rows=$$('.cart-widget-product[data-micro-sku]',container);
+      const records=matchingRecords(saved,nativeCounts(rows,new Map()));
+      const required=needs(records);
       const signature=JSON.stringify({
         records:records.map(r=>[r.id,bundleLabel(r),r.image,r.box?.code,r.items.map(x=>[x.code,x.q])]),
         rows:rows.map(row=>[row.dataset.microSku,widgetRowQty(row),widgetRowPrice(row),readNativeUnitPrice(row),$('input[name="itemId"]',row)?.value]),
@@ -788,7 +855,7 @@
     if(!target) return false;
     const parts=groupedParts(target);
     const snapshot=new Map(parts.map(p=>[p.code,cartCount(p.code)]));
-    removing=true;
+    removing=true;resetMissingObservation();
     try {
       // One request per physical SKU, not one request per copy.
       for(const p of parts) await addCart(p.code,p.q*copies);
@@ -815,7 +882,7 @@
       scheduleRender();
       return;
     }
-    removing = true;
+    removing = true;resetMissingObservation();
     try {
       for (const p of parts) await subtractCart(p.code, p.q);
       saveRecords(getRecords().filter(r => r.id !== id));
@@ -834,7 +901,7 @@
     const current=Math.max(0,cartCount(c)-bundled);
     const delta=desired-current;
     if (!delta) return true;
-    removing=true;
+    removing=true;resetMissingObservation();
     try {
       if(delta<0) await subtractCart(c,-delta);
       else await addCart(c,delta);
@@ -873,6 +940,8 @@
     });
   }
   window.__zbCartDiagnostics=()=>({version:window.__zbBundleVersion,viewport:innerWidth,
+    savedBundles:getRecords().map(r=>({id:r.id,type:r.type,name:bundleLabel(r),parts:groupedParts(r).map(p=>({sku:p.code,quantity:p.q}))})),
+    cartQuantities:[...countsFromLines(cartLines())],
     nativeQuantityFields:$$(NATIVE_AMOUNT).filter(el=>!!el.getClientRects().length).map(el=>({html:el.outerHTML,virtual:!!el.closest(VIRTUAL_ROWS),rowClasses:el.closest('tr,.cart-widget-product,.cart-item')?.className||'',sku:el.closest('[data-micro-sku]')?.dataset.microSku||null})),
     physicalPrices:$$('.removeable[data-micro-sku], #cart-widget .cart-widget-product[data-micro-sku], .order-summary-top .cart-item[data-micro-sku]').map(row=>{
       const sku=row.dataset.microSku,line=cartLines().find(x=>x.code===sku);
@@ -1167,7 +1236,8 @@
     });
     addButton.addEventListener('click',async e=>{
       e.preventDefault();
-      if (busy || !valid()) return;
+      if (busy || removing || !valid()) return;
+      removing=true;resetMissingObservation();
       busy=true;message.textContent='Kontroluji sklad…';update();
       const selected=products.filter(p=>p.q>0);
       try {
@@ -1196,13 +1266,12 @@
           items:selected.map(p=>({code:p.code,name:p.name,q:p.q,price:p.price}))
         };
         saveRecords([...getRecords(),record]);
-        syncNote();renderSignature='';scheduleRender();
         message.textContent='Balíček přidán do košíku.';
         products.forEach(p=>p.q=0);selectBase();
       } catch (err) {
         console.error('[ZB] Add bundle failed:',err);
         message.textContent=err.message || 'Nepodařilo se přidat balíček.';
-      } finally { busy=false;update(); }
+      } finally { busy=false;removing=false;renderSignature='';scheduleRender();update(); }
     });
     update();
   }
