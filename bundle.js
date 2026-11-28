@@ -1,12 +1,12 @@
-/* Universal Shoptet bundle engine v6.14 — configure products and boxes in HTML only. */
+/* Universal Shoptet bundle engine v6.15 — configure products and boxes in HTML only. */
 (() => {
   'use strict';
   if (window.__zbBundleV6) {
-    if (window.__zbBundleVersion !== '6.14') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
+    if (window.__zbBundleVersion !== '6.15') console.warn('[ZB] Another bundle engine is already active. Remove all older script tags.');
     return;
   }
   window.__zbBundleV6 = true;
-  window.__zbBundleVersion = '6.14';
+  window.__zbBundleVersion = '6.15';
 
   const D = document;
   const $ = (s, root = D) => root.querySelector(s);
@@ -16,15 +16,54 @@
   const split = v => String(v || '').split(',').map(x => x.trim()).filter(Boolean);
   const KEY = 'zbBundlesV6';
   const OWN_KEY = 'zbBundlesV6OwnNote';
+  const PENDING_KEY = 'zbBundlesV6PendingAdd';
+  const TRACE_KEY = 'zbBundlesV6Trace';
   const BEGIN = '--- DÁRKOVÉ BALÍČKY ---';
   const END = '--- KONEC DÁRKOVÝCH BALÍČKŮ ---';
   const DEBUG = false; // Set true for storefront diagnostics.
-  const log = (...args) => { if (DEBUG) console.log('[ZB v6.14]', ...args); };
+  const log = (...args) => { if (DEBUG) console.log('[ZB v6.15]', ...args); };
   const dl = k => { try { return typeof getShoptetDataLayer === 'function' ? getShoptetDataLayer(k) : null; } catch { return null; } };
   const api = () => window.shoptet?.cartShared;
   const getRecords = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(r => r && r.id && Array.isArray(r.items) && r.box?.code) : []; } catch { return []; } };
   const saveRecords = a => localStorage.setItem(KEY, JSON.stringify(a));
-  const clearRecords = () => { localStorage.removeItem(KEY); localStorage.removeItem(OWN_KEY); };
+  const clearRecords = () => { localStorage.removeItem(KEY); localStorage.removeItem(OWN_KEY); localStorage.removeItem(PENDING_KEY); };
+  const readJSON = (key, fallback) => {try {return JSON.parse(localStorage.getItem(key)||'null') ?? fallback;}catch{return fallback;}};
+  function trace(event, data={}) {
+    try {const entries=readJSON(TRACE_KEY,[]);entries.push({at:Date.now(),event,...data});localStorage.setItem(TRACE_KEY,JSON.stringify(entries.slice(-40)));}catch{}
+  }
+  const pendingAdd=()=>readJSON(PENDING_KEY,null);
+  function beginAdd(records, snapshot) {
+    if(pendingAdd()) throw new Error('Předchozí přidání balíčku nebylo potvrzeno. Zkontrolujte košík.');
+    const expected=[...needs(records)].map(([c,q])=>[c,(snapshot.get(c)||0)+q]);
+    const pending={records,before:[...snapshot],expected,at:Date.now()};
+    localStorage.setItem(PENDING_KEY,JSON.stringify(pending));
+    trace('add-start',{ids:records.map(r=>r.id),expected});
+  }
+  function finishAdd(records) {
+    const latest=getRecords(), ids=new Set(latest.map(r=>r.id));
+    saveRecords([...latest,...records.filter(r=>!ids.has(r.id))]);
+    localStorage.removeItem(PENDING_KEY);
+    trace('add-committed',{ids:records.map(r=>r.id)});
+  }
+  async function confirmAdd(records) {
+    const p=pendingAdd();
+    if(!p) throw new Error('Chybí záznam o přidání balíčku.');
+    const start=Date.now();
+    while(Date.now()-start<8500) {
+      const actual=countsFromLines(cartLines());
+      const native=mainSnapshots(actual);
+      if([actual,...native].some(counts=>p.expected.every(([c,q])=>(counts.get(c)||0)===q))) {
+        finishAdd(records);return;
+      }
+      await sleep(170);
+    }
+    trace('add-awaiting-confirmation',{ids:records.map(r=>r.id)});
+    throw new Error('Produkty byly přidány, ale košík zatím nepotvrdil celý balíček. Obnovte stránku a zkontrolujte košík.');
+  }
+  function cancelAdd(restored) {
+    trace('add-rollback',{restored});
+    if(restored) localStorage.removeItem(PENDING_KEY);
+  }
   const money = (n, currency = 'CZK', locale = 'cs-CZ') => {
     if (!Number.isFinite(n)) return 'Cena nedostupná';
     try { return new Intl.NumberFormat(locale, {style:'currency', currency, maximumFractionDigits:2}).format(n); }
@@ -193,28 +232,56 @@
     missingObservation=null;
     if(missingTimer!==null){clearTimeout(missingTimer);missingTimer=null;}
   }
-  function reconcileRecords() {
-    const records=getRecords();
-    if (removing || !records.length || !hasCartData()) return records;
+  function mainSnapshots(fallback) {
+    const rows=$$('.removeable[data-micro-sku]');
+    return [...new Set(rows.map(row=>row.parentElement))].map(parent=>nativeCounts(rows.filter(row=>row.parentElement===parent),fallback));
+  }
+  function recoverPending() {
+    if(removing) return;
+    const p=pendingAdd();
+    if(!p || !Array.isArray(p.records) || !Array.isArray(p.expected) || !p.expected.length) return;
+    const saved=getRecords();
+    if(p.records.every(r=>saved.some(x=>x.id===r.id))) {localStorage.removeItem(PENDING_KEY);return;}
     const actual=countsFromLines(cartLines());
-    const valid=matchingRecords(records,actual);
-    if(valid.length===records.length){resetMissingObservation();return valid;}
-    // A missing record may be a temporarily stale data layer. Only discard
-    // after a stable, independently corroborated native cart snapshot.
-    const native=$$('.removeable[data-micro-sku], #cart-widget .cart-widget-product[data-micro-sku]');
-    const parents=[...new Set(native.map(row=>row.parentElement))];
-    const key=countKey(actual);
-    const confirmed=parents.some(parent=>countKey(nativeCounts(native.filter(row=>row.parentElement===parent),new Map()))===key)
-      || (!actual.size && !!$('.cart-empty, .empty-cart, [data-testid="emptyCart"]') && !native.length);
-    if(!confirmed){resetMissingObservation();return valid;}
-    const observation=JSON.stringify([key,records.map(r=>r.id)]);
+    const native=mainSnapshots(actual);
+    const snapshots=native.length?native:[actual];
+    const all=[...saved,...p.records.filter(r=>!saved.some(x=>x.id===r.id))];
+    // Only recover a known, pre-recorded configuration, never infer a bundle
+    // from arbitrary standalone items. Exact expected quantities prevent
+    // accidentally assigning a separately purchased extra to this bundle.
+    if(snapshots.some(counts=>p.expected.every(([c,q])=>(counts.get(c)||0)===q) && matchingRecords(all,counts).length===all.length)) {
+      finishAdd(p.records);trace('add-recovered',{ids:p.records.map(r=>r.id)});return;
+    }
+    if(Date.now()-p.at>30000 && native.length && native.every(counts=>p.before.every(([c,q])=>(counts.get(c)||0)===q))) {
+      localStorage.removeItem(PENDING_KEY);trace('add-abandoned-no-change');
+    }
+    if(!actual.size && !native.length && $('.cart-empty, .empty-cart, [data-testid="emptyCart"]') && !$('.removeable[data-micro-sku]')) {
+      localStorage.removeItem(PENDING_KEY);trace('add-cleared-empty-cart');
+    }
+  }
+  function reconcileRecords() {
+    recoverPending();
+    const records=getRecords();
+    if (removing || !records.length || (!hasCartData() && !$('.cart-empty, .empty-cart, [data-testid="emptyCart"]'))) return records;
+    const actual=countsFromLines(cartLines());
+    const native=mainSnapshots(actual);
+    const snapshots=[actual,...native];
+    const complete=snapshots.find(counts=>matchingRecords(records,counts).length===records.length);
+    if(complete){resetMissingObservation();return records;}
+    const best=snapshots.map(counts=>matchingRecords(records,counts)).sort((a,b)=>b.length-a.length)[0];
+    // Never delete records from a product page/hover-cart snapshot. Those
+    // views can be stale across navigation. Only a confirmed empty cart is
+    // safe to clear automatically; nonempty mismatches remain ungrouped.
+    const empty=!actual.size && !native.length && !!$('.cart-empty, .empty-cart, [data-testid="emptyCart"]') && !$('.removeable[data-micro-sku],#cart-widget .cart-widget-product[data-micro-sku]');
+    if(!empty){resetMissingObservation();return best;}
+    const observation=JSON.stringify(records.map(r=>r.id));
     if(missingObservation?.key!==observation){
       resetMissingObservation();missingObservation={key:observation,since:Date.now()};
       missingTimer=setTimeout(()=>{missingTimer=null;scheduleRender();},4200);
     } else if(Date.now()-missingObservation.since>=4000){
-      saveRecords(valid);resetMissingObservation();log('Confirmed missing bundle records removed');
+      saveRecords([]);resetMissingObservation();trace('confirmed-empty-cart',{ids:records.map(r=>r.id)});
     }
-    return valid;
+    return best;
   }
 
   // Order note: preserve customer text outside the generated section.
@@ -466,10 +533,15 @@
       configureQuantityInput(input,opts);
     }
   }
+  function removeVirtualRelated(row) {
+    for(const el of $$('.show-related, .related-products, [data-testid*="related" i]',row)) el.remove();
+    for(const el of $$('.p-related',row)) {if(el.childNodes.length)el.replaceChildren();}
+  }
   function protectResponsiveQuantities() {
     for (const row of $$(VIRTUAL_ROWS)) {
       const opts=rowQuantity.get(row);
       if (opts) isolateRowQuantities(row,opts);
+      removeVirtualRelated(row);
     }
   }
   function configureQuantityInput(input, opts) {
@@ -558,6 +630,7 @@
     remove.setAttribute('aria-label',opts.bundle?'Odebrat celý balíček':'Odebrat samostatný produkt');
     remove.setAttribute(opts.bundle?'data-zb-remove':'data-zb-extra-remove',opts.bundle?opts.id:opts.code);
     $$('button',tr).filter(b=>!b.matches('[data-zb-remove],[data-zb-duplicate],[data-zb-extra],[data-zb-extra-remove]')).forEach(b=>b.remove());
+    removeVirtualRelated(tr);
     return tr;
   }
   function makeMainRow(r,total,source,inStock) {
@@ -849,22 +922,25 @@
   }
   let removing = false;
   async function duplicateBundle(id, copies=1) {
-    if (removing || !Number.isSafeInteger(copies) || copies<1 || copies>999) return false;
+    if (removing || pendingAdd() || !Number.isSafeInteger(copies) || copies<1 || copies>999) return false;
     const records=reconcileRecords();
     const target=records.find(r=>r.id===id);
     if(!target) return false;
     const parts=groupedParts(target);
     const snapshot=new Map(parts.map(p=>[p.code,cartCount(p.code)]));
     removing=true;resetMissingObservation();
+    const added=Array.from({length:copies},()=>({...target,id:`${Date.now()}-${Math.random().toString(36).slice(2,10)}`,t:Date.now()}));
     try {
+      beginAdd(added,snapshot);
       // One request per physical SKU, not one request per copy.
       for(const p of parts) await addCart(p.code,p.q*copies);
-      const added=Array.from({length:copies},()=>({...target,id:`${Date.now()}-${Math.random().toString(36).slice(2,10)}`,t:Date.now()}));
-      saveRecords([...getRecords(),...added]);
+      try {await confirmAdd(added);}
+      catch(err) {console.error('[ZB] Confirmation pending:',err);alert(err.message);return false;}
       if(!$('.removeable[data-micro-sku]')) location.reload();
       return true;
     } catch(err) {
       const restored=await rollbackTo(snapshot);
+      cancelAdd(restored);
       console.error('[ZB] Duplicate bundle failed:',err);
       alert(restored ? 'Další balíček se nepodařilo přidat. Košík byl vrácen do původního stavu.' :
         'Další balíček se nepodařilo přidat a vrácení změn nebylo úplné. Zkontrolujte košík.');
@@ -939,6 +1015,12 @@
       input.readOnly=false;delete input.dataset.zbPending;input.removeAttribute('aria-busy');
     });
   }
+  window.__zbBundleState=()=>{
+    const records=getRecords(), layer=countsFromLines(cartLines());
+    const native=mainSnapshots(layer);
+    const describe=counts=>({quantities:[...counts],matched:matchingRecords(records,counts).map(r=>r.id),missing:[...needs(records)].filter(([c,q])=>(counts.get(c)||0)<q).map(([sku,required])=>({sku,required,actual:counts.get(sku)||0})),required:[...needs(records)]});
+    return {version:window.__zbBundleVersion,saved:records.map(r=>({id:r.id,type:r.type,parts:groupedParts(r).map(p=>({sku:p.code,q:p.q}))})),pending:pendingAdd(),layer:describe(layer),native:native.map(describe),rendered:$$('.zb-cart-bundle').map(r=>r.dataset.zbVirtual),trace:readJSON(TRACE_KEY,[])};
+  };
   window.__zbCartDiagnostics=()=>({version:window.__zbBundleVersion,viewport:innerWidth,
     savedBundles:getRecords().map(r=>({id:r.id,type:r.type,name:bundleLabel(r),parts:groupedParts(r).map(p=>({sku:p.code,quantity:p.q}))})),
     cartQuantities:[...countsFromLines(cartLines())],
@@ -1237,6 +1319,8 @@
     addButton.addEventListener('click',async e=>{
       e.preventDefault();
       if (busy || removing || !valid()) return;
+      recoverPending();
+      if(pendingAdd()){message.textContent='Předchozí přidání balíčku nebylo potvrzeno. Zkontrolujte košík.';return;}
       removing=true;resetMissingObservation();
       busy=true;message.textContent='Kontroluji sklad…';update();
       const selected=products.filter(p=>p.q>0);
@@ -1247,16 +1331,6 @@
         if (bad) throw new Error(`Nedostatečný sklad nebo cena: ${bad.name}`);
         if (!box || !valid()) throw new Error('Vybraná kombinace nebo krabice již není dostupná.');
         if (remaining(box)<1) throw new Error(`Nedostatečný sklad: ${box.name}`);
-        const parts=[{code:box.code,q:1},...selected.map(p=>({code:p.code,q:p.q}))];
-        const snapshot=new Map(parts.map(p=>[p.code,cartCount(p.code)]));
-        message.textContent='Přidávám produkty…';
-        try {
-          for (const p of parts) await addCart(p.code,p.q);
-        } catch (err) {
-          const restored=await rollbackTo(snapshot);
-          throw new Error(restored ? `Přidání se nezdařilo, změny v košíku byly vráceny. ${err.message}` :
-            'Přidání se nezdařilo a automatické vrácení nebylo úplné. Zkontrolujte košík.');
-        }
         const record={
           id:`${Date.now()}-${Math.random().toString(36).slice(2,10)}`,
           t:Date.now(), type:activeType().name, typeId:current,
@@ -1265,7 +1339,19 @@
           box:{code:box.code,name:box.name,capacity:box.capacity,price:box.price},
           items:selected.map(p=>({code:p.code,name:p.name,q:p.q,price:p.price}))
         };
-        saveRecords([...getRecords(),record]);
+        const parts=groupedParts(record);
+        const snapshot=new Map(parts.map(p=>[p.code,cartCount(p.code)]));
+        beginAdd([record],snapshot);
+        message.textContent='Přidávám produkty…';
+        try {
+          for (const p of parts) await addCart(p.code,p.q);
+        } catch (err) {
+          const restored=await rollbackTo(snapshot);
+          cancelAdd(restored);
+          throw new Error(restored ? `Přidání se nezdařilo, změny v košíku byly vráceny. ${err.message}` :
+            'Přidání se nezdařilo a automatické vrácení nebylo úplné. Zkontrolujte košík.');
+        }
+        await confirmAdd([record]);
         message.textContent='Balíček přidán do košíku.';
         products.forEach(p=>p.q=0);selectBase();
       } catch (err) {

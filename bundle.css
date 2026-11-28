@@ -128,3 +128,6 @@
     border-top:1px solid rgba(100,100,100,.10);
 }
 @media(max-width:767px){.zb-contents > summary{min-height:34px}}
+
+/* V6.15: Shoptet moves related links into a separate cell on mobile. */
+:is(.zb-cart-bundle,.zb-cart-extra,.zb-widget-bundle,.zb-widget-extra,.zb-recap-bundle,.zb-recap-extra) :is(.p-related,.show-related,.related-products){display:none!important}
